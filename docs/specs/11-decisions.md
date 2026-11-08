@@ -41,7 +41,7 @@ that document is defective and this file wins.
 
 ## Deferred (post-Phase 1)
 
-- **`course_schedule.day` DB `CHECK` `IN ('MON'…'SUN')` (`00 §7.4`).** A-18 records the four
+- **A-20 — `course_schedule.day` DB `CHECK` `IN ('MON'…'SUN')` (`00 §7.4`).** A-18 records the four
   constraints enforced at the database level; the day-of-week check is not one of them and is absent
   from the Phase 1 schema. Deferred because the column is written only through the JPA
   `DayOfWeekCode` enum, which cannot produce an out-of-range value, and no raw-SQL write path exists
