@@ -175,7 +175,7 @@ so seat counts and the credit meter are consistent.
 | T-FR3-07 | negative | already registered in `FIT1045` | `POST` again | 409 `ALREADY_REGISTERED`; exactly 1 registration row; `availableSeats` unchanged (119) |
 | T-FR3-08 | edge | student has 18 credits | register a 6cp course | 201 — total becomes exactly 24 |
 | T-FR3-09 | negative | student has 20 credits | register a 6cp course | 409 `CREDIT_LIMIT_EXCEEDED`; no row; seats unchanged |
-| T-FR3-10 | negative | `FIT3182` seeded full | register it | 409 `COURSE_FULL`; no row; `availableSeats` still 0 |
+| T-FR3-10 | negative | `FIT3182` seeded full | register it | 409 `COURSE_FULL`; no *new* row; `availableSeats` still 0 |
 | T-FR3-11 | concurrency | `FIT3143` capacity 1, 5 students | 5 concurrent `POST`s | exactly one 201, four 409 `COURSE_FULL`; final `availableSeats=0`; exactly 1 registration row (see T-FR6-03) |
 | T-FR3-12 | security | Aisha's token, body includes `{"courseId": …, "studentId":"32067890"}` | `POST` | 201 attributed to `32012345`; Daniel has no registration (body field ignored) |
 | T-FR3-13 | edge | duplicate submit of the *same* request twice, sequentially | 2 × `POST` | first 201, second 409 `ALREADY_REGISTERED`; one row only |
