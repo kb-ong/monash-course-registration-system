@@ -592,7 +592,7 @@ FULL COURSE CARD                      │ ⚠ We couldn't load courses.  │
 ┌──────────────────────────────┐      │   [ Retry ]                  │
 │ FIT3182            [ FULL ]  │      └──────────────────────────────┘
 │ Big Data Management          │
-│ SEATS ░░░░░░░░░░ 0 of 40     │      CLOSED WINDOW
+│ SEATS ░░░░░░░░░░ 0 of 1      │      CLOSED WINDOW
 │ [  Full  ]      Details →    │      banner: ▌ Registration closed 20 Dec
 └──────────────────────────────┘      cards keep [ Register ] disabled
 ```

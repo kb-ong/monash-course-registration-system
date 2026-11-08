@@ -120,7 +120,7 @@ sequenceDiagram
     UI->>C: POST /api/registrations {courseId}
     C->>S: register(studentId, courseId)
     S->>S: 1. period open? else 403 REGISTRATION_CLOSED
-    S->>DB: 2. course exists? else 404 COURSE_NOT_FOUND
+    S->>DB: 2. course exists in active semester? else 404 COURSE_NOT_FOUND
     S->>DB: 3. already registered? else 409 ALREADY_REGISTERED
     S->>DB: 4. sum credits + new > 24? else 409 CREDIT_LIMIT_EXCEEDED
     S->>DB: 5. SELECT course FOR UPDATE
@@ -251,7 +251,7 @@ Never serialised: `password_hash`. No `Student` DTO may expose it (NFR2).
 | `name` | `VARCHAR(160)` | not null | |
 | `credit_hours` | `INT` | not null, `CHECK (credit_hours IN (3,6))` | |
 | `instructor` | `VARCHAR(120)` | not null | `Dr …` |
-| `capacity` | `INT` | not null, `CHECK (capacity >= 0)` | `0` allowed for permanently-full demo row |
+| `capacity` | `INT` | not null, `CHECK (capacity >= 0)` | `0` is legal (A-18) but unused by the seed; the full demo row is capacity 1 (A-16) |
 | `available_seats` | `INT` | not null, `CHECK (available_seats >= 0 AND available_seats <= capacity)` | mutated only under lock |
 | `semester` | `VARCHAR(10)` | not null, indexed | `2026-S1`, `2026-S2` |
 | `faculty` | `VARCHAR(80)` | not null | |
@@ -325,7 +325,7 @@ See NFR4 (§[08](./08-non-functional.md)) for the exact event matrix.
 | `FIT3077` | Software Engineering: Architecture and Design | 6 | 45 | 45 | Information Technology |
 | `FIT3143` | Parallel Computing | 6 | **1** | **1** | Information Technology |
 | `FIT3179` | Data Visualisation | 6 | 50 | 50 | Information Technology |
-| `FIT3182` | Big Data Management | 6 | 40 | **0** | Information Technology |
+| `FIT3182` | Big Data Management | 6 | **1** | **0** | Information Technology |
 | `ECF1100` | Principles of Economics | 6 | 90 | 90 | Business |
 | `ENG1001` | Engineering Design | 6 | 70 | 70 | Engineering |
 | `LAW1111` | Foundations of Law | 6 | 65 | 65 | Law |
@@ -333,8 +333,10 @@ See NFR4 (§[08](./08-non-functional.md)) for the exact event matrix.
 | `MTH1030` | Techniques for Modelling | 6 | 75 | 75 | Science |
 | `SCI1020` | Science of Nature | 6 | 85 | 85 | Science |
 
-`FIT3143` = the single-seat course for full-course tests.
-`FIT3182` = the permanently-full course (`availableSeats = 0`).
+`FIT3143` = the single-seat course for full-course tests (1 seat **free**).
+`FIT3182` = the permanently-full course: `capacity = 1`, `availableSeats = 0`, backed by **one**
+seeded registration owned by `32067890` (Daniel Tan) — see A-16. It is full because a seat is taken,
+not because a count was fabricated; **C1 holds for every seeded course**, including this one.
 `FIT1045` must have **2** schedule slots (multi-slot test); every other course 1 slot.
 `FIT2099`, `FIT3077` intentionally overlap in time (documents that clashes are *not* detected — NG2).
 
@@ -378,13 +380,13 @@ Timestamps: see §9.6. Auth: `Authorization: Bearer <jwt>`.
 
 | HTTP | `code` | Trigger | Endpoint(s) |
 | --- | --- | --- | --- |
-| 400 | `VALIDATION_ERROR` | missing/blank/malformed field, too-long `q`, unknown `semester`, unparseable JSON | all |
+| 400 | `VALIDATION_ERROR` | missing/blank/malformed request field (including a non-UUID `courseId` in the body), too-long `q`, unknown `semester`, unparseable JSON | all |
 | 401 | `INVALID_CREDENTIALS` | unknown studentId **or** wrong password (identical response) | `POST /auth/login` |
 | 401 | `UNAUTHORIZED` | missing, malformed, expired or bad-signature token | all authenticated |
 | 403 | `REGISTRATION_CLOSED` | `serverTime` outside `[startAt, endAt]` | `POST /registrations`, `DELETE /registrations/{id}` |
 | 403 | `NOT_OWNER` | registration exists but belongs to another student | `DELETE /registrations/{id}` |
-| 404 | `COURSE_NOT_FOUND` | unknown course id | `GET /courses/{id}`, `POST /registrations` |
-| 404 | `REGISTRATION_NOT_FOUND` | unknown registration id (or already dropped) | `DELETE /registrations/{id}` |
+| 404 | `COURSE_NOT_FOUND` | unknown course id, **or** course not in the active semester (detail `SEMESTER_NOT_ACTIVE`, A-17) | `GET /courses/{id}`, `POST /registrations` |
+| 404 | `REGISTRATION_NOT_FOUND` | unknown registration id, already dropped, **or a malformed/non-UUID `registrationId`** (path ids are opaque: treated as not found, never 400; the attempt is still audited as `DROP/FAILURE` with `detail = VALIDATION_ERROR`, A-19) | `DELETE /registrations/{id}` |
 | 409 | `COURSE_FULL` | `availableSeats = 0` | `POST /registrations` |
 | 409 | `ALREADY_REGISTERED` | unique `(student, course)` already exists | `POST /registrations` |
 | 409 | `CREDIT_LIMIT_EXCEEDED` | `totalCredits + course.creditHours > 24` | `POST /registrations` |
@@ -392,6 +394,11 @@ Timestamps: see §9.6. Auth: `Authorization: Bearer <jwt>`.
 
 `UNAUTHORIZED` and `INTERNAL_ERROR` are **elaborations** consistent with the frozen envelope; the
 contract names only the codes above them.
+
+A malformed path identifier is the one exception to the 400 row: `DELETE /api/registrations/{id}`
+with a non-UUID value returns `404 REGISTRATION_NOT_FOUND`, exactly like an unknown id, because path
+ids are opaque (FR4 §3). The audit row still records `detail = VALIDATION_ERROR`, so the two cases
+remain distinguishable in the audit trail (A-19).
 
 ### 9.3 Endpoint reference
 
@@ -408,8 +415,9 @@ contract names only the codes above them.
 | E9 | DELETE | `/api/registrations/{registrationId}` | bearer | 200 | 401, 403, 404 |
 | E10 | GET | `/api/registrations/export` | bearer | 200 `text/csv` | 401 |
 
-**Validation precedence** for E8 (normative): auth → body → period → course exists → duplicate →
-credit limit → capacity. For E9: auth → registration exists → ownership → period.
+**Validation precedence** for E8 (normative): auth → body → period → course exists in the active
+semester (A-17) → duplicate → credit limit → capacity. For E9: auth → registration exists →
+ownership → period.
 
 ### 9.4 Payloads
 
@@ -608,7 +616,7 @@ Period config values (`app.registration.period-*`) are wall-clock in the univers
 
 | ID | Ambiguity | Resolution | Where |
 | --- | --- | --- | --- |
-| A-01 | "one course at capacity 0 seeded as full" | Interpreted as `capacity = 40`, `availableSeats = 0`. Capacity `0` is legal but reserved; the seeded full course uses seats=0 so it is registrable-in-principle but currently full | §8.2 |
+| A-01 | "one course at capacity 0 seeded as full" | **Superseded by A-16**: the seeded full course is `capacity = 1` with exactly one registration held by another student, so `availableSeats = 0` and C1 holds. Capacity `0` remains legal at schema level (A-18) but is not used by the seed | §8.2, [11](./11-decisions.md) |
 | A-02 | Enum lacks a rejected-drop action | Failed drops are `action=DROP, outcome=FAILURE`; failed registrations are `action=REGISTER_REJECTED, outcome=FAILURE`. No new enum values | NFR4 |
 | A-03 | Order of 409 checks in E8 | period → exists → duplicate → credit limit → capacity (capacity last, inside the lock) | §9.3 |
 | A-04 | Wrong password vs unknown user | Same 401 `INVALID_CREDENTIALS`; dummy BCrypt compare to equalise timing | FR1 |
@@ -622,6 +630,11 @@ Period config values (`app.registration.period-*`) are wall-clock in the univers
 | A-12 | Client clock trust | Never. `open` and mutations are server-authoritative; UI uses `serverTime` offset | FR7 |
 | A-13 | Course list ordering | `code` ASC everywhere (catalogue, registrations items tiebreak) | §9.4 |
 | A-14 | `q` matching scope | `code` OR `name` only — not `instructor`, not `faculty` | FR2 |
+
+**The series continues at A-16 in [11 — Decision Log](./11-decisions.md)** (A-15 is unassigned; see the
+note there). A-16…A-19 cover the seed-as-full-course shape, the non-active-semester registration path,
+the normative schema constraints, and validation-rejected audit rows. Decisions in 11 supersede the
+text they name.
 
 ---
 
@@ -673,6 +686,7 @@ Period config values (`app.registration.period-*`) are wall-clock in the univers
 | NFR1–NFR5 | [08-non-functional.md](./08-non-functional.md) | all |
 | UI design system | [09-ui-design-system.md](./09-ui-design-system.md) | frontend |
 | Test strategy | [10-test-strategy.md](./10-test-strategy.md) | tester |
+| Decisions A-16…A-19 | [11-decisions.md](./11-decisions.md) | planner |
 
 **User stories** (referenced by every FR file):
 

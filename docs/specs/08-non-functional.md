@@ -106,7 +106,7 @@ Order note: on `POST /registrations` with **no token and a closed window**, the 
 | --- | --- | --- | --- | --- |
 | T-NFR2-01 | security | seeded student | query `student` table | `password_hash` starts `$2a$10$`, length 60, and is not `Password123!` |
 | T-NFR2-02 | security | any endpoint returning a student/course/registration | inspect JSON for `password`, `passwordHash`, `$2a$` | zero matches |
-| T-NFR2-03 | security | no token / bad token / expired token | call each protected endpoint | 401 `UNAUTHORIZED` for all 8 protected routes |
+| T-NFR2-03 | security | no token / bad token / expired token | call each protected endpoint | 401 `UNAUTHORIZED` for all 7 protected routes (`E2,E4,E5,E7,E8,E9,E10`, `00 §9.3`) |
 | T-NFR2-04 | security | valid token | `DELETE` another student's registration | 403 `NOT_OWNER`; body contains no course code |
 | T-NFR2-05 | security | any 4xx/5xx | inspect body | matches `{"error":{"code","message","timestamp"}}`, no `trace`, no `exception`, no `at edu.monash` |
 | T-NFR2-06 | security | forced 500 (e.g. repository stub throwing) | call endpoint | 500 `INTERNAL_ERROR` with generic message; server log holds the stack trace, response does not |
@@ -166,12 +166,12 @@ Phase 1 runs as a single Spring Boot process with an in-memory database. Honest 
 
 ### NFR4.1 Requirement
 
-Every **register** and **drop** attempt produces exactly one `audit_log` row — success or failure —
-written even when the business transaction rolls back. Reads are not audited.
+Every **authenticated** **register** and **drop** attempt produces exactly one `audit_log` row —
+success or failure — written even when the business transaction rolls back. Reads are not audited.
 
 | ID | Requirement |
 | --- | --- |
-| NFR4-1 | Exactly one row per attempt. No duplicates from retries inside the same request. |
+| NFR4-1 | Exactly one row per **authenticated** attempt. No duplicates from retries inside the same request. An attempt rejected by authentication (401 `UNAUTHORIZED`) is not audited — there is no subject for the mandatory `student_id` column (A-19). |
 | NFR4-2 | Failure rows survive rollback → written in `REQUIRES_NEW`. |
 | NFR4-3 | Row content is immutable (insert-only; no update/delete in the application). |
 | NFR4-4 | `created_at` = server clock at attempt time, UTC. |
@@ -184,7 +184,7 @@ written even when the business transaction rolls back. Reads are not audited.
 | --- | --- | --- | --- | --- | --- |
 | E-01 | Register success | `REGISTER` | `SUCCESS` | `null` | 201 |
 | E-02 | Register, window closed | `REGISTER_REJECTED` | `FAILURE` | `REGISTRATION_CLOSED` | 403 |
-| E-03 | Register, unknown course | `REGISTER_REJECTED` | `FAILURE` | `COURSE_NOT_FOUND` | 404 |
+| E-03 | Register, unknown course id (well-formed UUID, no such course) | `REGISTER_REJECTED` | `FAILURE` | `COURSE_NOT_FOUND` | 404 |
 | E-04 | Register, duplicate | `REGISTER_REJECTED` | `FAILURE` | `ALREADY_REGISTERED` | 409 |
 | E-05 | Register, credit limit | `REGISTER_REJECTED` | `FAILURE` | `CREDIT_LIMIT_EXCEEDED` | 409 |
 | E-06 | Register, no seats | `REGISTER_REJECTED` | `FAILURE` | `COURSE_FULL` | 409 |
@@ -192,9 +192,27 @@ written even when the business transaction rolls back. Reads are not audited.
 | E-08 | Drop, not found | `DROP` | `FAILURE` | `REGISTRATION_NOT_FOUND` | 404 |
 | E-09 | Drop, not owner | `DROP` | `FAILURE` | `NOT_OWNER` | 403 |
 | E-10 | Drop, window closed | `DROP` | `FAILURE` | `REGISTRATION_CLOSED` | 403 |
+| E-11 | Register, course exists but is **not in the active semester** (A-17) | `REGISTER_REJECTED` | `FAILURE` | `SEMESTER_NOT_ACTIVE` | 404 |
+| E-12 | Register, request rejected by validation — missing/blank/non-UUID `courseId`, unparseable body (A-19) | `REGISTER_REJECTED` | `FAILURE` | `VALIDATION_ERROR` | 400 |
+| E-13 | Drop, request rejected by validation — `registrationId` path value not a UUID (A-19) | `DROP` | `FAILURE` | `VALIDATION_ERROR` | 404 |
 
-Out of scope for `audit_log` (application log only): login success/failure, token rejection, catalogue
-reads, CSV export.
+**Completeness rule.** E-01…E-13 is the **entire** audit vocabulary. Every register and drop request
+that reaches an authenticated handler produces exactly one row from this table, and no other row shape
+is permitted. In particular:
+
+- E-03 and E-11 share HTTP `404 COURSE_NOT_FOUND` deliberately (no semester oracle); only `detail`
+  differs, and `detail` is never serialised in a response (§7.6, NFR2-S6).
+- E-08 and E-13 share HTTP `404 REGISTRATION_NOT_FOUND` deliberately: a malformed path id is treated
+  as not found, never as a 400 (FR4 §3, `00 §9.2`); only `detail` differs.
+- `course_code` is the resolved course code where one exists; it is `null` on E-12/E-13 and on any row
+  where the course id never resolved (A-19, §7.6).
+- On E-12/E-13 the student is the JWT subject, so the row is still attributable.
+- An unexpected `500 INTERNAL_ERROR` with no business rejection is **not** an E-row: the service either
+  determined a business failure (which wrote its row before throwing) or never got far enough to make
+  an auditable decision.
+
+Out of scope for `audit_log` (application log only): login success/failure (A-10), token rejection
+(401), catalogue reads, registration reads, period queries, CSV export.
 
 ### NFR4.3 Test scenarios
 
@@ -203,11 +221,13 @@ reads, CSV export.
 | T-NFR4-01 | audit | clean DB | successful register | exactly 1 row: E-01 fields; `created_at` within 5 s of now |
 | T-NFR4-02 | audit | closed window | failed register | exactly 1 row E-02 **and** no registration row (proves `REQUIRES_NEW`) |
 | T-NFR4-03 | audit | duplicate | second register | row count for that student/course = 1 success + 1 `ALREADY_REGISTERED` failure |
-| T-NFR4-04 | audit | full course | failed register | 1 row E-06 with `course_code=FIT3182`/`FIT3143` |
+| T-NFR4-04 | audit | full course (seed: `FIT3182`, capacity 1 with one held registration, A-16; or `FIT3143` after Daniel takes it) | failed register | exactly 1 new E-06 row with `course_code=FIT3182`/`FIT3143`; total row count grows by 1 |
 | T-NFR4-05 | audit | other student's registration | failed drop | 1 row E-09 `student_id` = caller, `course_code` may be set |
 | T-NFR4-06 | audit | successful drop | `DELETE` | 1 row E-07; no update/delete of previous rows |
 | T-NFR4-07 | audit | 20-thread burst on 10 seats (T-FR6-04) | after completion | 10 E-01 + 10 E-06 rows; total 20; no `null` action/outcome |
 | T-NFR4-08 | audit | any response body | scan | no audit row content is exposed by any API (no audit endpoint exists) |
+| T-NFR4-09 | audit | prior-semester course `FIT1008` (2026-S1) | `POST /api/registrations` with its id | 404 `COURSE_NOT_FOUND`; exactly 1 row `REGISTER_REJECTED/FAILURE/SEMESTER_NOT_ACTIVE`; `course_code=FIT1008`; seats unchanged (A-17) |
+| T-NFR4-10 | audit | authenticated student | `POST /api/registrations` with `courseId="not-a-uuid"`, then `DELETE /api/registrations/not-a-uuid` | 400 `VALIDATION_ERROR` for the register, 404 `REGISTRATION_NOT_FOUND` for the drop; exactly 2 rows — E-12 (`REGISTER_REJECTED`) and E-13 (`DROP`), both `detail=VALIDATION_ERROR`, `course_code` null (A-19) |
 
 ---
 

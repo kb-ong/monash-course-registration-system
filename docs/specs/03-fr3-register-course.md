@@ -20,7 +20,7 @@
 | --- | --- |
 | B1 | Request body is `{"courseId": "<uuid>"}`. `courseId` is required and must parse as a UUID. |
 | B2 | The student identity comes **only** from the JWT subject. Any `studentId` in the body is ignored (and must not be honoured). |
-| B3 | Checks run in this order (normative, A-03): auth → body → **period** → **course exists** → **duplicate** → **credit limit** → **capacity**. |
+| B3 | Checks run in this order (normative, A-03): auth → body → **period** → **course exists in the active semester** (A-17) → **duplicate** → **credit limit** → **capacity**. |
 | B4 | Period closed → 403 `REGISTRATION_CLOSED`. No writes, no seat change. |
 | B5 | Unknown course → 404 `COURSE_NOT_FOUND`. |
 | B6 | Already registered (same student + course) → 409 `ALREADY_REGISTERED`. Idempotent retries must not create a second row. |

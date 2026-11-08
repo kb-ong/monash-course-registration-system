@@ -43,7 +43,8 @@
 | period | open | 403 `REGISTRATION_CLOSED` |
 
 A malformed (non-UUID) path value is treated as **not found** → 404, not 400: paths are opaque
-identifiers and this avoids a second error shape.
+identifiers and this avoids a second error shape. The attempt is still audited — `DROP/FAILURE` with
+`detail = VALIDATION_ERROR` (§5) — so it stays distinguishable from an unknown id in the trail.
 
 ---
 
@@ -68,15 +69,17 @@ HTTP/1.1 200 OK
 
 ## 5. Audit log events
 
-| Outcome | `action` | `outcome` | `detail` |
+| Case | `action` | `outcome` | `detail` |
 | --- | --- | --- | --- |
 | Success | `DROP` | `SUCCESS` | `null` |
 | Not found | `DROP` | `FAILURE` | `REGISTRATION_NOT_FOUND` |
+| Malformed id (non-UUID path value, returned as 404) | `DROP` | `FAILURE` | `VALIDATION_ERROR` |
 | Not owner | `DROP` | `FAILURE` | `NOT_OWNER` |
 | Closed | `DROP` | `FAILURE` | `REGISTRATION_CLOSED` |
 
-For `REGISTRATION_NOT_FOUND`, `course_code` is `null` (unresolvable). For `NOT_OWNER`, `course_code`
-**may** be recorded (it is an internal audit trail), but the HTTP response must not disclose it.
+For `REGISTRATION_NOT_FOUND` and for a malformed path id, `course_code` is `null` (unresolvable). For
+`NOT_OWNER`, `course_code` **may** be recorded (it is an internal audit trail), but the HTTP response
+must not disclose it.
 
 ---
 
@@ -132,7 +135,7 @@ disabled with a tooltip "Registration is closed".
 | T-FR4-07 | edge | course at `availableSeats = capacity` (e.g. drop when nobody else joined) | `DELETE` | `availableSeats` stays `capacity`, never `capacity + 1` |
 | T-FR4-08 | concurrency | `FIT3143` full (1/1) after one registration | drop and register simultaneously by two students | exactly one of the two mutating outcomes succeeds; final invariant `availableSeats + count = capacity` holds |
 | T-FR4-09 | security | no token | `DELETE` | 401 `UNAUTHORIZED`; row unchanged; no `DROP` audit row |
-| T-FR4-10 | edge | malformed id `"abc"` | `DELETE /api/registrations/abc` | 404 `REGISTRATION_NOT_FOUND` (not 400, not 500) |
+| T-FR4-10 | edge | malformed id `"abc"` | `DELETE /api/registrations/abc` | 404 `REGISTRATION_NOT_FOUND` (not 400, not 500); one `DROP/FAILURE/VALIDATION_ERROR` audit row (A-19) |
 
 ---
 

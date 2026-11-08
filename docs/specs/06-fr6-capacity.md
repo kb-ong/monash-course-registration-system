@@ -140,12 +140,12 @@ Copy rules: never say "sold out" (it is not commerce), always "full" or "no seat
 | ID | Type | Given | When | Then |
 | --- | --- | --- | --- | --- |
 | T-FR6-01 | happy | `FIT2004` capacity 80, seats 80 | one registration | 201; `availableSeats=79`; invariant C1 holds |
-| T-FR6-02 | negative | `FIT3143` capacity 1, seats 1, already taken by Daniel | Aisha registers | 409 `COURSE_FULL`; `availableSeats` still 0; Aisha has no registration |
+| T-FR6-02 | negative | `FIT3143` capacity 1, seats 1; Daniel registers in setup (seats now 0) | Aisha registers | 409 `COURSE_FULL`; `availableSeats` still 0; Aisha has no registration |
 | T-FR6-03 | concurrency | fresh `FIT3143` (capacity 1) | 5 distinct students POST concurrently via `ExecutorService` + `CountDownLatch` | exactly 1 × 201 and 4 × 409 `COURSE_FULL`; 1 registration row; `availableSeats=0` |
 | T-FR6-04 | concurrency | dedicated course capacity 10, seats 10, 20 distinct students | 20 concurrent POSTs, all released by one latch | exactly 10 × 201, 10 × 409; 10 rows; `availableSeats=0`; no 5xx; no duplicate registration ids |
 | T-FR6-05 | concurrency | as T-FR6-04 | repeat the burst 3 times with a fresh course each time | same result every run (no flakiness tolerance: 3/3 must pass) |
 | T-FR6-06 | concurrency | 1 seat free, 2 students | concurrent register + drop by the incumbent, then register | invariant C1 holds; total successes never exceed capacity |
-| T-FR6-07 | edge | `FIT3182` capacity 40, seats 0 (seeded full, A-01) | register | 409 `COURSE_FULL`; seats stay 0 |
+| T-FR6-07 | edge | `FIT3182` capacity 1, seats 0 — full because one registration is seeded for Daniel (A-16) | register as Aisha | 409 `COURSE_FULL`; seats stay 0; exactly 1 registration row |
 | T-FR6-08 | edge | any successful register | enable SQL logging | the emitted SQL for the course read contains `for update` (proves a row lock was used, catches in-JVM locking) |
 | T-FR6-09 | edge | course at `availableSeats = capacity` | drop | `availableSeats = capacity`, not `capacity + 1` |
 | T-FR6-10 | edge | full course `FIT3143`, one student drops | register immediately after | 201; `availableSeats=0` again |
