@@ -1,0 +1,39 @@
+spring:
+  datasource:
+    # A dedicated in-memory database for the test JVM. LOCK_TIMEOUT is raised because the
+    # concurrency suites deliberately queue 25 writers on one row; the production default would
+    # surface H2 lock-timeout noise rather than application behaviour.
+    url: jdbc:h2:mem:registration-test;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;LOCK_TIMEOUT=20000
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+    hikari:
+      # Mirrors production so the concurrency suites exercise the shipped pool size.
+      maximum-pool-size: 20
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    open-in-view: false
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: false
+  h2:
+    console:
+      enabled: false
+
+app:
+  jwt:
+    secret: test-secret-for-monash-course-registration-phase-1-hs256-0123456789
+    expiration-minutes: 120
+  registration:
+    period-start: 2026-10-01T00:00:00
+    period-end: 2026-12-20T23:59:59
+    active-semester: 2026-S2
+  cors:
+    allowed-origins: http://localhost:5173,http://127.0.0.1:5173
+
+logging:
+  level:
+    edu.monash.registration: WARN
+    org.hibernate.SQL: WARN

@@ -5,10 +5,15 @@ spring:
   application:
     name: monash-course-registration
   datasource:
-    url: jdbc:h2:mem:registration;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    url: jdbc:h2:mem:registration;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;LOCK_TIMEOUT=20000
     driver-class-name: org.h2.Driver
     username: sa
     password: ""
+    hikari:
+      # Sized for the spec's 25-writer burst. Failure audits no longer borrow from this pool: they
+      # use the dedicated audit pool below, so peak demand here is one connection per in-flight
+      # request (B-2).
+      maximum-pool-size: 20
   jpa:
     hibernate:
       ddl-auto: create-drop
@@ -18,19 +23,27 @@ spring:
         format_sql: true
   h2:
     console:
-      enabled: true
-      path: /h2-console
+      # Never exposed by default; application-dev.yml opts in for local development only.
+      enabled: false
 
 app:
   jwt:
-    secret: ${JWT_SECRET:change-me-in-production-monash-course-registration-secret-key-0123456789}
+    # No committed secret. When JWT_SECRET is absent a random key is generated at startup.
+    secret: ${JWT_SECRET:}
     expiration-minutes: 120
+  audit:
+    # Failure audits get their own small pool over the same (in-memory) database. The business pool
+    # is busy with the request that is being audited, so a second connection from it would double
+    # peak demand and deadlock under an all-failure burst (B-2).
+    datasource:
+      maximum-pool-size: 5
+      connection-timeout-ms: 5000
   registration:
     period-start: ${REGISTRATION_START:2026-10-01T00:00:00}
     period-end: ${REGISTRATION_END:2026-12-20T23:59:59}
     active-semester: ${ACTIVE_SEMESTER:2026-S2}
   cors:
-    allowed-origins: http://localhost:5173
+    allowed-origins: http://localhost:5173,http://127.0.0.1:5173
 
 logging:
   level:
