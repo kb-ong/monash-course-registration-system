@@ -22,6 +22,18 @@ cd frontend && npm install && npm run dev
 
 Demo student: `32012345` / `Password123!`
 
+### Configuration
+
+| Env var | Default | Purpose |
+| --- | --- | --- |
+| `JWT_SECRET` | random per start | HS256 signing key (≥32 chars). Set it to keep tokens valid across restarts. |
+| `REGISTRATION_START` | `2026-10-01T00:00:00` | Registration window opens (ISO-8601, local time). |
+| `REGISTRATION_END` | `2026-12-20T23:59:59` | Registration window closes. |
+| `ACTIVE_SEMESTER` | `2026-S2` | Only this semester's courses can be registered. |
+
+Data is H2 in-memory and reseeded on every start. The H2 console is disabled by
+default; enable it only locally with `--spring.profiles.active=dev`.
+
 ## Test
 
 ```bash
