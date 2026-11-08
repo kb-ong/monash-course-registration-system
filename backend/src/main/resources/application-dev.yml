@@ -1,0 +1,6 @@
+spring:
+  h2:
+    console:
+      # Local development only: the security chain permits /h2-console/** only under this profile.
+      enabled: true
+      path: /h2-console
