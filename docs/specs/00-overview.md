@@ -1,7 +1,7 @@
 # 00 — System Overview & Contract Reference
 
-**Project:** Monash Course Registration System — Phase 1 (FR1–FR7) + Phase 2 FR8
-**Status:** Phase 1 baseline v1.0; Phase 2 FR8 added in v1.1
+**Project:** Monash Course Registration System — Phase 1 (FR1–FR7) + Phase 2 FR8 + FR10
+**Status:** Phase 1 baseline v1.0; Phase 2 FR8 added in v1.1; Phase 2 FR10 added in v1.2
 **Source of truth:** [`../../ORCHESTRATION.md`](../../ORCHESTRATION.md). Where this document and
 ORCHESTRATION.md disagree, ORCHESTRATION.md wins and this document is defective.
 **Audience:** coder-backend, coder-frontend, tester, reviewer.
@@ -11,11 +11,12 @@ ORCHESTRATION.md disagree, ORCHESTRATION.md wins and this document is defective.
 ## 1. Purpose
 
 Phase 1 delivers a single, coherent student-facing workflow: **log in → browse the semester
-catalogue → register → review your timetable → drop**. Phase 2 starts with **FR8 prerequisite
-validation**: registration also verifies that the student's completed-course history contains every
-prerequisite of the requested course. The product must look and feel like a serious university
-product ("fancy university"), and it must be *correct under concurrency* — the seat counter is the
-one place where a plausible-looking implementation is routinely wrong.
+catalogue → register → review your timetable → drop**. Phase 2 adds **FR8 prerequisite validation**
+(registration also verifies that the student's completed-course history contains every prerequisite
+of the requested course) and **FR10 maximum credit-hour validation** (a configured per-semester
+credit limit, with the remaining credits shown to the student). The product must look and feel like a
+serious university product ("fancy university"), and it must be *correct under concurrency* — the
+seat counter is the one place where a plausible-looking implementation is routinely wrong.
 
 The system is a teaching-scale, single-semester, single-university application. It is not a
 general student administration system.
@@ -41,7 +42,8 @@ general student administration system.
   FR4 drop, FR5 registered-course view + CSV + print, FR6 capacity validation (incl. concurrency),
   FR7 registration-period control.
 - **Phase 2:** FR8 prerequisite validation before registration, with missing prerequisites shown to
-  the student and a prerequisite section on the course detail page.
+  the student and a prerequisite section on the course detail page; **FR10 maximum credit-hour
+  validation** with a configurable semester limit and remaining-credit warnings.
 - NFR1 performance, NFR2 security, NFR3 availability, NFR4 audit logging, NFR5 usability.
 - Responsive desktop + mobile web, keyboard accessible, WCAG 2.1 AA contrast.
 - Seeded demo data (3 students, 16 active-semester courses, 3 prior-semester courses, a prerequisite
@@ -72,6 +74,7 @@ general student administration system.
 | **Semester** | A teaching period identified by `code`, e.g. `2026-S2`. Exactly one is *active*. |
 | **Active semester** | The semester configured by `app.registration.active-semester`. The catalogue defaults to it. |
 | **Credit point (cp)** | Unit of course weight. Values: `3` or `6`. |
+| **Credit limit** | The configured maximum credit points a student may hold in the active semester (`app.registration.max-credits`, default `24`, FR10). |
 | **Capacity** | Maximum enrolments a course permits. Immutable in Phase 1. |
 | **Available seats** | `capacity − current enrolments`. Invariant: `0 ≤ availableSeats ≤ capacity`. |
 | **Full** | `availableSeats = 0`. Registration returns 409 `COURSE_FULL`. |
@@ -130,7 +133,7 @@ sequenceDiagram
     S->>DB: 2. course exists in active semester? else 404 COURSE_NOT_FOUND
     S->>DB: 3. already registered? else 409 ALREADY_REGISTERED
     S->>DB: 4. all prerequisites completed? else 409 PREREQUISITE_NOT_MET
-    S->>DB: 5. sum credits + new > 24? else 409 CREDIT_LIMIT_EXCEEDED
+    S->>DB: 5. sum credits + new > configured max? else 409 CREDIT_LIMIT_EXCEEDED
     S->>DB: 6. SELECT course FOR UPDATE
     S->>S: 7. seats > 0? else 409 COURSE_FULL
     S->>DB: 8. availableSeats-1, INSERT registration
@@ -453,7 +456,7 @@ Timestamps: see §9.6. Auth: `Authorization: Bearer <jwt>`.
 | 404 | `REGISTRATION_NOT_FOUND` | unknown registration id, already dropped, **or a malformed/non-UUID `registrationId`** (path ids are opaque: treated as not found, never 400; the attempt is still audited as `DROP/FAILURE` with `detail = VALIDATION_ERROR`, A-19) | `DELETE /registrations/{id}` |
 | 409 | `COURSE_FULL` | `availableSeats = 0` | `POST /registrations` |
 | 409 | `ALREADY_REGISTERED` | unique `(student, course)` already exists | `POST /registrations` |
-| 409 | `CREDIT_LIMIT_EXCEEDED` | `totalCredits + course.creditHours > 24` | `POST /registrations` |
+| 409 | `CREDIT_LIMIT_EXCEEDED` | `totalCredits + course.creditHours > maxCredits`, where `maxCredits` is `app.registration.max-credits` (default `24`, FR10) | `POST /registrations` |
 | 409 | `PREREQUISITE_NOT_MET` | one or more prerequisites are absent from the student's completion history; `message` names every missing course code, sorted ASC | `POST /registrations` |
 | 500 | `INTERNAL_ERROR` | unexpected server fault (never leaks detail) | all |
 
@@ -589,6 +592,7 @@ Ordered `code` DESC. `name` derived: `Semester {n} {year}` from `YYYY-Sn`.
   "semester": "2026-S2",
   "totalCredits": 12,
   "maxCredits": 24,
+  "remainingCredits": 12,
   "items": [
     {
       "registrationId": "1b7e5c44-6c2f-4c9e-8a11-3f0d2c9b7a55",
@@ -599,8 +603,10 @@ Ordered `code` DESC. `name` derived: `Semester {n} {year}` from `YYYY-Sn`.
 }
 ```
 
-`totalCredits` = Σ `course.creditHours`. `maxCredits` constant `24`. Items ordered `registeredAt` ASC,
-then `course.code` ASC. Empty → `{"semester":…,"totalCredits":0,"maxCredits":24,"items":[]}`.
+`totalCredits` = Σ `course.creditHours`. `maxCredits` is the configured
+`app.registration.max-credits` value (default `24`, FR10). `remainingCredits` =
+`max(0, maxCredits − totalCredits)`. Items ordered `registeredAt` ASC, then `course.code` ASC.
+Empty → `{"semester":…,"totalCredits":0,"maxCredits":24,"remainingCredits":24,"items":[]}`.
 
 #### E8 `POST /api/registrations`
 
@@ -692,7 +698,7 @@ Period config values (`app.registration.period-*`) are wall-clock in the univers
 | --- | --- | --- | --- |
 | A-01 | "one course at capacity 0 seeded as full" | **Superseded by A-16**: the seeded full course is `capacity = 1` with exactly one registration held by another student, so `availableSeats = 0` and C1 holds. Capacity `0` remains legal at schema level (A-18) but is not used by the seed | §8.2, [11](./11-decisions.md) |
 | A-02 | Enum lacks a rejected-drop action | Failed drops are `action=DROP, outcome=FAILURE`; failed registrations are `action=REGISTER_REJECTED, outcome=FAILURE`. No new enum values | NFR4 |
-| A-03 | Order of 409 checks in E8 | period → exists → duplicate → credit limit → capacity (capacity last, inside the lock). **Phase 2 (A-21) inserts prerequisites between duplicate and credit limit** | §9.3 |
+| A-03 | Order of 409 checks in E8 | period → exists → duplicate → credit limit → capacity (capacity last, inside the lock). **Phase 2 (A-21) inserts prerequisites between duplicate and credit limit; A-22 makes the credit threshold configured** | §9.3 |
 | A-04 | Wrong password vs unknown user | Same 401 `INVALID_CREDENTIALS`; dummy BCrypt compare to equalise timing | FR1 |
 | A-05 | Unknown `semester` query value | 400 `VALIDATION_ERROR` (not empty list) — surfaces client bugs | FR2 |
 | A-06 | Empty catalogue/registrations | `200 []` / `200` with empty items; never 404 | FR2, FR5 |
@@ -708,8 +714,8 @@ Period config values (`app.registration.period-*`) are wall-clock in the univers
 **The series continues at A-16 in [11 — Decision Log](./11-decisions.md)** (A-15 is unassigned; see the
 note there). A-16…A-19 cover the seed-as-full-course shape, the non-active-semester registration path,
 the normative schema constraints, and validation-rejected audit rows; A-20 is deferred and A-21
-records the Phase 2 prerequisite model and check order. Decisions in 11 supersede the text they
-name.
+records the Phase 2 prerequisite model and check order; **A-22** records the FR10 configured credit
+limit. Decisions in 11 supersede the text they name.
 
 ---
 
@@ -721,7 +727,7 @@ name.
 | AS2 | One active semester at a time | Catalogue scoping changes |
 | AS3 | ≤ 200 courses per semester, ≤ 40 per student | No pagination needed |
 | AS4 | Students pre-provisioned; credentials seeded | FR1 needs registration flow |
-| AS5 | `maxCredits = 24` for every student, no per-program variation | Credit rule changes |
+| AS5 | One configured `maxCredits` applies to every student in the active semester (default `24`, overridable by `app.registration.max-credits`); no per-program variation | Per-student/per-program credit rules are required |
 | AS6 | Prerequisites are a static seeded graph; no corequisites or program rules; no approvals | FR8's data source and rule engine change |
 | AS7 | Data loss on restart is acceptable for the demo | Persistence work required |
 | AS8 | Modern evergreen browsers (last 2 versions) | Transpile targets change |
@@ -759,6 +765,7 @@ name.
 | FR6 Capacity Validation | [06-fr6-capacity.md](./06-fr6-capacity.md) | backend (critical) |
 | FR7 Registration Period | [07-fr7-registration-period.md](./07-fr7-registration-period.md) | backend + frontend |
 | **FR8 Prerequisite Validation (Phase 2)** | [12-fr8-prerequisites.md](./12-fr8-prerequisites.md) | backend + frontend |
+| **FR10 Maximum Credit-Hour Validation (Phase 2)** | [13-fr10-max-credit-hours.md](./13-fr10-max-credit-hours.md) | backend + frontend |
 | NFR1–NFR5 | [08-non-functional.md](./08-non-functional.md) | all |
 | UI design system | [09-ui-design-system.md](./09-ui-design-system.md) | frontend |
 | Test strategy | [10-test-strategy.md](./10-test-strategy.md) | tester |

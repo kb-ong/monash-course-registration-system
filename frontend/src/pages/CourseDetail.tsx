@@ -109,6 +109,9 @@ export default function CourseDetail() {
   const registered = isRegistered(course.id)
   const registration = getRegistration(course.id)
   const totalCredits = data?.totalCredits ?? 0
+  const maxCredits = data?.maxCredits
+  const remainingCredits =
+    maxCredits === undefined ? null : Math.max(0, maxCredits - totalCredits)
   const full = course.availableSeats <= 0
   const periodOpen = period?.open ?? false
   const activeSemester = period?.semester ?? ''
@@ -118,6 +121,7 @@ export default function CourseDetail() {
     registered,
     periodOpen,
     totalCredits,
+    maxCredits,
     activeSemester,
   })
   const semesterBlocked = action.kind === 'semester'
@@ -295,9 +299,13 @@ export default function CourseDetail() {
                       >
                         {actionLabel}
                       </Button>
-                      {!semesterBlocked ? (
+                      {!semesterBlocked && action.kind !== 'credit' ? (
                         <p className="mt-3 text-body-sm text-ink-500">
-                          Adding this brings you to {action.nextCredits} of 24 credits.
+                          {maxCredits === undefined || remainingCredits === null
+                            ? `Adding this brings you to ${action.nextCredits} credits.`
+                            : `Adding this brings you to ${action.nextCredits} of ${maxCredits} credits — ${maxCredits - action.nextCredits} credit${
+                                maxCredits - action.nextCredits === 1 ? '' : 's'
+                              } would remain.`}
                         </p>
                       ) : null}
                       {semesterBlocked ? (

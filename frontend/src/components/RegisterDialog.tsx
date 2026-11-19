@@ -1,6 +1,7 @@
 import { AlertCircle } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { normalizeApiError } from '../api/client'
+import { cn } from '../lib/cn'
 import { creditPoints, scheduleLine } from '../lib/format'
 import { useRegistrations } from '../registration/RegistrationsContext'
 import { useRegistrationPeriod } from '../registration/RegistrationPeriodContext'
@@ -39,7 +40,11 @@ export default function RegisterDialog({
   if (!course) return null
 
   const totalCredits = data?.totalCredits ?? 0
+  const maxCredits = data?.maxCredits
   const nextCredits = totalCredits + course.creditHours
+  const remainingCredits =
+    maxCredits === undefined ? null : Math.max(0, maxCredits - totalCredits)
+  const overLimit = maxCredits !== undefined && nextCredits > maxCredits
   const slot = course.schedule[0]
 
   const handleConfirm = async () => {
@@ -72,7 +77,11 @@ export default function RegisterDialog({
           onClose()
           break
         case 'CREDIT_LIMIT_EXCEEDED':
-          setError(`That would take you to ${nextCredits} credits. Your limit is 24.`)
+          // The server message names the configured limit and the remaining credits (FR10).
+          // Refresh so the dialog recomputes against the authoritative total if another
+          // registration landed while it was open.
+          void refresh()
+          setError(apiError.message)
           break
         case 'PREREQUISITE_NOT_MET':
           // The server names every missing course in the message (FR8).
@@ -129,7 +138,13 @@ export default function RegisterDialog({
           >
             Cancel
           </Button>
-          <Button variant="primary" size="md" onClick={() => void handleConfirm()} loading={submitting}>
+          <Button
+            variant="primary"
+            size="md"
+            onClick={() => void handleConfirm()}
+            loading={submitting}
+            disabled={overLimit}
+          >
             Confirm register
           </Button>
         </>
@@ -150,9 +165,31 @@ export default function RegisterDialog({
         ) : null}
       </div>
 
-      <p className="mt-4 text-body text-ink-700">
-        This will bring you to {nextCredits} of 24 credits.
-      </p>
+      {maxCredits === undefined || remainingCredits === null ? (
+        <p className="mt-4 text-body text-ink-700">
+          This will bring you to {nextCredits} credits.
+        </p>
+      ) : (
+        <div className="mt-4 space-y-1" role="status" aria-live="polite">
+          <p className="text-body text-ink-700">
+            This will bring you to {nextCredits} of {maxCredits} credits.
+          </p>
+          <p
+            className={cn(
+              'text-body-sm',
+              overLimit ? 'font-semibold text-danger-600' : 'text-ink-500',
+            )}
+          >
+            {overLimit
+              ? `You have ${remainingCredits} credit${
+                  remainingCredits === 1 ? '' : 's'
+                } remaining, so this course does not fit within your limit.`
+              : `You would have ${maxCredits - nextCredits} credit${
+                  maxCredits - nextCredits === 1 ? '' : 's'
+                } remaining.`}
+          </p>
+        </div>
+      )}
 
       {error ? (
         <p

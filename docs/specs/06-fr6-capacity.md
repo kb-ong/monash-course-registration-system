@@ -53,7 +53,8 @@ public RegistrationResult register(String studentId, UUID courseId) {
         throw new AlreadyRegisteredException();
 
     int credits = registrationRepository.sumCredits(studentId);
-    if (credits + locked.getCreditHours() > MAX_CREDITS)
+    // FR10: maxCredits is app.registration.max-credits (default 24), not a constant.
+    if (credits + locked.getCreditHours() > maxCredits)
         throw new CreditLimitExceededException();
 
     if (locked.getAvailableSeats() <= 0)

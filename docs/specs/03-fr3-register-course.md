@@ -2,16 +2,16 @@
 
 **Story:** US2, US4 · **Actors:** Student (P1), System
 **Endpoints:** `POST /api/registrations`
-**Depends on:** [FR1](./01-fr1-student-login.md), [FR2](./02-fr2-view-courses.md), [FR6](./06-fr6-capacity.md), [FR7](./07-fr7-registration-period.md), [FR8](./12-fr8-prerequisites.md).
+**Depends on:** [FR1](./01-fr1-student-login.md), [FR2](./02-fr2-view-courses.md), [FR6](./06-fr6-capacity.md), [FR7](./07-fr7-registration-period.md), [FR8](./12-fr8-prerequisites.md), [FR10](./13-fr10-max-credit-hours.md).
 
 ---
 
 ## 1. Requirement
 
 > A signed-in student can register for a course in the active semester, once, while the registration
-> window is open, provided they have completed every prerequisite (FR8), stay within the 24-credit
-> limit and a seat is available. On success, exactly one seat is consumed and the student immediately
-> sees the course in their registrations.
+> window is open, provided they have completed every prerequisite (FR8), stay within the configured
+> semester credit limit (FR10) and a seat is available. On success, exactly one seat is consumed and
+> the student immediately sees the course in their registrations.
 
 ---
 
@@ -25,7 +25,7 @@
 | B4 | Period closed → 403 `REGISTRATION_CLOSED`. No writes, no seat change. |
 | B5 | Unknown course → 404 `COURSE_NOT_FOUND`. |
 | B6 | Already registered (same student + course) → 409 `ALREADY_REGISTERED`. Idempotent retries must not create a second row. |
-| B7 | `totalCredits + course.creditHours > 24` → 409 `CREDIT_LIMIT_EXCEEDED`. Landing exactly on 24 is allowed. |
+| B7 | `totalCredits + course.creditHours > maxCredits` → 409 `CREDIT_LIMIT_EXCEEDED`, where `maxCredits` is the configured semester limit (default 24, FR10). Landing exactly on the limit is allowed. |
 | B8 | `availableSeats = 0` → 409 `COURSE_FULL`, no record created, seat count unchanged. |
 | B9 | Success → 201 with `registrationId`, `message`, the full `course` object (seats already decremented) and `availableSeats`. |
 | B10 | Seat decrement and registration insert happen in **one transaction** under a pessimistic write lock on the course row (see FR6). |
@@ -49,7 +49,7 @@
 | course | exists | 404 `COURSE_NOT_FOUND` |
 | uniqueness | no existing `(student, course)` | 409 `ALREADY_REGISTERED` |
 | prerequisites | every `course.prerequisites` id is in the student's `completedCourses` | 409 `PREREQUISITE_NOT_MET` |
-| credits | `sum + creditHours ≤ 24` | 409 `CREDIT_LIMIT_EXCEEDED` |
+| credits | `sum + creditHours ≤ maxCredits` (configured, default 24) | 409 `CREDIT_LIMIT_EXCEEDED` |
 | seats | `availableSeats ≥ 1` | 409 `COURSE_FULL` |
 
 `VALIDATION_ERROR` message must name the offending field, e.g.
@@ -99,7 +99,7 @@ Failure examples:
 ```
 
 ```json
-{"error":{"code":"CREDIT_LIMIT_EXCEEDED","message":"Adding FIT3077 (6 credit points) would exceed the 24 credit point limit.","timestamp":"2026-11-08T11:26:41+08:00"}}
+{"error":{"code":"CREDIT_LIMIT_EXCEEDED","message":"Adding FIT3077 (6 credit points) would exceed the 24 credit point limit. You have 4 credit points remaining.","timestamp":"2026-11-08T11:26:41+08:00"}}
 ```
 
 ```json
@@ -145,6 +145,7 @@ evidence — see NFR4.
 │  Clayton, Building 25, Rm 125                │
 │                                              │
 │  This will bring you to 12 of 24 credits.    │
+│  You would have 12 credits remaining.        │
 │                                              │
 │              [ Cancel ]  [ Confirm register ]│
 └──────────────────────────────────────────────┘
@@ -161,7 +162,7 @@ States:
 | Pending | request in flight | button spinner, dialog buttons disabled, `aria-busy` |
 | Success | 201 | dialog closes, toast "Registered for FIT2004" + seat meter animates down, card badge becomes "Registered" |
 | Error — full | 409 `COURSE_FULL` | dialog closes, toast (danger) "FIT3143 just filled up. No seat was taken." + card refreshes to FULL |
-| Error — credit | 409 `CREDIT_LIMIT_EXCEEDED` | dialog stays open, inline danger alert "That would take you to 30 credits. Your limit is 24." |
+| Error — credit | 409 `CREDIT_LIMIT_EXCEEDED` | dialog stays open, inline danger alert with the server message naming the configured limit and remaining credits; registrations refetch so the dialog recomputes |
 | Error — prerequisite | 409 `PREREQUISITE_NOT_MET` | dialog stays open, inline danger alert with the server message naming every missing prerequisite; no toast claims success |
 | Error — closed | 403 `REGISTRATION_CLOSED` | dialog closes, page-wide banner switches to "Registration closed", toast info |
 | Error — duplicate | 409 `ALREADY_REGISTERED` | dialog closes, toast info "You're already registered in this course." card marked registered |
@@ -183,8 +184,8 @@ so seat counts and the credit meter are consistent.
 | T-FR3-05 | negative | `courseId` = `"not-a-uuid"` | `POST` | 400 `VALIDATION_ERROR`; message mentions `courseId` |
 | T-FR3-06 | negative | well-formed unknown UUID | `POST` | 404 `COURSE_NOT_FOUND`; audit detail `COURSE_NOT_FOUND` |
 | T-FR3-07 | negative | already registered in `FIT1045` | `POST` again | 409 `ALREADY_REGISTERED`; exactly 1 registration row; `availableSeats` unchanged (119) |
-| T-FR3-08 | edge | student has 18 credits | register a 6cp course | 201 — total becomes exactly 24 |
-| T-FR3-09 | negative | student has 20 credits | register a 6cp course | 409 `CREDIT_LIMIT_EXCEEDED`; no row; seats unchanged |
+| T-FR3-08 | edge | student has 18 credits under the default 24 limit | register a 6cp course | 201 — total becomes exactly 24 |
+| T-FR3-09 | negative | student has 20 credits under the default 24 limit | register a 6cp course | 409 `CREDIT_LIMIT_EXCEEDED`; no row; seats unchanged |
 | T-FR3-10 | negative | `FIT3182` seeded full | register it | 409 `COURSE_FULL`; no *new* row; `availableSeats` still 0 |
 | T-FR3-11 | concurrency | `FIT3143` capacity 1, 5 students | 5 concurrent `POST`s | exactly one 201, four 409 `COURSE_FULL`; final `availableSeats=0`; exactly 1 registration row (see T-FR6-03) |
 | T-FR3-12 | security | Aisha's token, body includes `{"courseId": …, "studentId":"32067890"}` | `POST` | 201 attributed to `32012345`; Daniel has no registration (body field ignored) |
@@ -200,8 +201,8 @@ so seat counts and the credit meter are consistent.
 returned, one registration exists, and `availableSeats` decreases by exactly one.
 **FR3-AC2** — Given the same student and course twice, when the second request arrives, then 409
 `ALREADY_REGISTERED` and no second row exists.
-**FR3-AC3** — Given the addition would exceed 24 credits, when the student registers, then 409
-`CREDIT_LIMIT_EXCEEDED`, no row, no seat change.
+**FR3-AC3** — Given the addition would exceed the configured semester limit (default 24), when the
+student registers, then 409 `CREDIT_LIMIT_EXCEEDED`, no row, no seat change.
 **FR3-AC4** — Given a course with zero seats, when the student registers, then 409 `COURSE_FULL`, no
 row, no seat change.
 **FR3-AC5** — Given a closed period, when any registration is attempted, then 403

@@ -162,7 +162,7 @@ export default function Login() {
             <ul className="mt-8 hidden space-y-2.5 text-body-sm text-white/75 sm:block">
               <li className="flex items-center gap-2.5">
                 <span className="h-1.5 w-1.5 shrink-0 bg-monash-gold" aria-hidden="true" />
-                {semester} · Prerequisites enforced
+                {semester} · Prerequisites & credit limit
               </li>
               <li className="flex items-center gap-2.5">
                 <span className="h-1.5 w-1.5 shrink-0 bg-monash-gold" aria-hidden="true" />

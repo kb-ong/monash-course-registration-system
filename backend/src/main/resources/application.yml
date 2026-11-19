@@ -42,6 +42,9 @@ app:
     period-start: ${REGISTRATION_START:2026-10-01T00:00:00}
     period-end: ${REGISTRATION_END:2026-12-20T23:59:59}
     active-semester: ${ACTIVE_SEMESTER:2026-S2}
+    # FR10: maximum credit points per student per active semester. Override for a semester limit
+    # such as 18 (the FR10 example) without a code change.
+    max-credits: ${REGISTRATION_MAX_CREDITS:24}
   cors:
     allowed-origins: http://localhost:5173,http://127.0.0.1:5173
 

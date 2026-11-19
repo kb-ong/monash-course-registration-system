@@ -135,8 +135,9 @@ Phase 1 runs as a single Spring Boot process with an in-memory database. Honest 
 
 ### NFR3.2 Practical approach (what the coders actually do)
 
-1. **Fail fast, fail loud.** `@ConfigurationProperties` validation (`@Validated`) on JWT secret length and
-   period ordering; throw at startup.
+1. **Fail fast, fail loud.** `@ConfigurationProperties` validation (`@Validated`) on JWT secret length,
+   period ordering and the FR10 credit limit (`app.registration.max-credits` must be at least 1);
+   throw at startup.
 2. **One error boundary.** `@RestControllerAdvice` maps every exception to the envelope. No 500 without
    `INTERNAL_ERROR`; the stack trace goes to the log with a correlation id.
 3. **Health probe.** Add `spring-boot-starter-actuator` only if the operator needs it — **not required**
@@ -186,7 +187,7 @@ success or failure — written even when the business transaction rolls back. Re
 | E-02 | Register, window closed | `REGISTER_REJECTED` | `FAILURE` | `REGISTRATION_CLOSED` | 403 |
 | E-03 | Register, unknown course id (well-formed UUID, no such course) | `REGISTER_REJECTED` | `FAILURE` | `COURSE_NOT_FOUND` | 404 |
 | E-04 | Register, duplicate | `REGISTER_REJECTED` | `FAILURE` | `ALREADY_REGISTERED` | 409 |
-| E-05 | Register, credit limit | `REGISTER_REJECTED` | `FAILURE` | `CREDIT_LIMIT_EXCEEDED` | 409 |
+| E-05 | Register, configured credit limit exceeded (FR10) | `REGISTER_REJECTED` | `FAILURE` | `CREDIT_LIMIT_EXCEEDED` | 409 |
 | E-06 | Register, no seats | `REGISTER_REJECTED` | `FAILURE` | `COURSE_FULL` | 409 |
 | E-07 | Drop success | `DROP` | `SUCCESS` | `null` | 200 |
 | E-08 | Drop, not found | `DROP` | `FAILURE` | `REGISTRATION_NOT_FOUND` | 404 |

@@ -58,6 +58,7 @@ class DropControllerTest extends BaseIntegrationTest {
         JsonNode list = body(getAuthed("/api/registrations", bearer(aisha)));
         assertThat(list.path("items").size()).isZero();
         assertThat(list.path("totalCredits").asInt()).isZero();
+        assertThat(list.path("remainingCredits").asInt()).isEqualTo(24);
     }
 
     @Test

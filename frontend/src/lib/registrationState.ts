@@ -1,7 +1,5 @@
 import type { Course } from '../types/api'
 
-export const MAX_CREDITS = 24
-
 export type RegisterBlockKind = 'none' | 'registered' | 'semester' | 'full' | 'period' | 'credit'
 
 export interface RegisterActionState {
@@ -19,6 +17,8 @@ interface RegisterActionArgs {
   registered: boolean
   periodOpen: boolean
   totalCredits: number
+  /** Configured semester credit limit from the registrations response; unknown before it loads. */
+  maxCredits?: number
   /** The semester registrations are currently accepted for. Empty when unknown. */
   activeSemester?: string
 }
@@ -35,6 +35,7 @@ export function registerActionState({
   registered,
   periodOpen,
   totalCredits,
+  maxCredits,
   activeSemester,
 }: RegisterActionArgs): RegisterActionState {
   const nextCredits = totalCredits + course.creditHours
@@ -73,11 +74,14 @@ export function registerActionState({
     }
   }
 
-  if (nextCredits > MAX_CREDITS) {
+  if (maxCredits !== undefined && nextCredits > maxCredits) {
+    const remaining = Math.max(0, maxCredits - totalCredits)
     return {
       disabled: true,
       label: 'Credit limit reached',
-      reason: `That would take you to ${nextCredits} credits. Your limit is ${MAX_CREDITS}.`,
+      reason: `That would take you to ${nextCredits} of ${maxCredits} credits. You have ${remaining} credit${
+        remaining === 1 ? '' : 's'
+      } remaining.`,
       kind: 'credit',
       nextCredits,
     }
