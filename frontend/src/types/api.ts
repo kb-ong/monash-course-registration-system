@@ -59,6 +59,7 @@ export interface RegistrationsResponse {
   semester: string
   totalCredits: number
   maxCredits: number
+  remainingCredits: number
   items: RegistrationItem[]
 }
 

@@ -30,6 +30,9 @@ app:
     period-start: 2026-10-01T00:00:00
     period-end: 2026-12-20T23:59:59
     active-semester: 2026-S2
+    # Existing Phase 1 scenarios are written against the 24-credit default; FR10's configured
+    # limit is covered by MaxCreditConfigTest, which overrides this property.
+    max-credits: 24
   cors:
     allowed-origins: http://localhost:5173,http://127.0.0.1:5173
 

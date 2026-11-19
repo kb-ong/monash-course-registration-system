@@ -5,6 +5,7 @@ import edu.monash.registration.api.dto.RegisterResponse;
 import edu.monash.registration.api.dto.RegistrationItemDto;
 import edu.monash.registration.api.dto.RegistrationListDto;
 import edu.monash.registration.api.dto.RegistrationPeriodDto;
+import edu.monash.registration.config.RegistrationProperties;
 import edu.monash.registration.domain.AuditAction;
 import edu.monash.registration.domain.Course;
 import edu.monash.registration.domain.Registration;
@@ -44,19 +45,19 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>Seat arithmetic happens only while holding a {@code SELECT ... FOR UPDATE} lock on the course
  * row, inside the same transaction that inserts or deletes the registration. Check order is
  * normative: period → course exists → duplicate → prerequisites → timetable clash → credit limit →
- * capacity (A-03, A-21, A-22) for register, and registration exists → owner → period for drop.
+ * capacity (A-03, A-21, A-22) for register, and registration exists → owner → period for drop. The
+ * credit limit is the configured semester limit (FR10), not a constant.
  */
 @Service
 public class RegistrationService {
 
     private static final Logger log = LoggerFactory.getLogger(RegistrationService.class);
 
-    public static final int MAX_CREDITS = 24;
-
     private final RegistrationRepository registrationRepository;
     private final CourseRepository courseRepository;
     private final StudentRepository studentRepository;
     private final RegistrationPeriodService periodService;
+    private final RegistrationProperties registrationProperties;
     private final AuditService auditService;
     private final CourseDtoMapper mapper;
     private final Clock clock;
@@ -65,6 +66,7 @@ public class RegistrationService {
             CourseRepository courseRepository,
             StudentRepository studentRepository,
             RegistrationPeriodService periodService,
+            RegistrationProperties registrationProperties,
             AuditService auditService,
             CourseDtoMapper mapper,
             Clock clock) {
@@ -72,6 +74,7 @@ public class RegistrationService {
         this.courseRepository = courseRepository;
         this.studentRepository = studentRepository;
         this.periodService = periodService;
+        this.registrationProperties = registrationProperties;
         this.auditService = auditService;
         this.mapper = mapper;
         this.clock = clock;
@@ -134,11 +137,13 @@ public class RegistrationService {
                     TimetableClashDetector.describe(clashes));
         }
 
+        int maxCredits = registrationProperties.getMaxCredits();
         int currentCredits = currentCredits(student.getId());
-        if (currentCredits + course.getCreditHours() > MAX_CREDITS) {
+        if (currentCredits + course.getCreditHours() > maxCredits) {
             auditFailure(studentId, course.getCode(), AuditAction.REGISTER_REJECTED,
                     "CREDIT_LIMIT_EXCEEDED");
-            throw new CreditLimitExceededException(course.getCode(), course.getCreditHours(), MAX_CREDITS);
+            throw new CreditLimitExceededException(course.getCode(), course.getCreditHours(),
+                    currentCredits, maxCredits);
         }
 
         if (course.getAvailableSeats() <= 0) {
@@ -226,8 +231,11 @@ public class RegistrationService {
             items.add(new RegistrationItemDto(registration.getId(), registration.getRegisteredAt(),
                     mapper.toDto(registration.getCourse())));
         }
-        log.debug("registrations.view studentId={} count={}", studentId, items.size());
-        return new RegistrationListDto(semester, totalCredits, MAX_CREDITS, items);
+        int maxCredits = registrationProperties.getMaxCredits();
+        log.debug("registrations.view studentId={} count={} totalCredits={} maxCredits={}",
+                studentId, items.size(), totalCredits, maxCredits);
+        return new RegistrationListDto(semester, totalCredits, maxCredits,
+                Math.max(0, maxCredits - totalCredits), items);
     }
 
     private int currentCredits(UUID studentId) {

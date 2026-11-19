@@ -3,6 +3,7 @@ import { cn } from '../../lib/cn'
 
 interface StatRingProps {
   value: number
+  /** Configured semester limit; omitted until the registrations response has loaded. */
   max?: number
   caption?: string
   onDark?: boolean
@@ -16,7 +17,7 @@ const CIRCUMFERENCE = 2 * Math.PI * RADIUS
 
 export default function StatRing({
   value,
-  max = 24,
+  max,
   caption = 'credit points',
   onDark = false,
   className,
@@ -24,16 +25,23 @@ export default function StatRing({
   loading = false,
 }: StatRingProps) {
   const reduceMotion = useReducedMotion()
-  const safeMax = max > 0 ? max : 24
+  const hasLimit = max !== undefined && max > 0
+  const safeMax = hasLimit ? max : 0
   const safeValue = Math.max(0, value)
-  const ratio = Math.min(1, safeValue / safeMax)
-  const incomplete = safeValue > safeMax
+  const ratio = hasLimit ? Math.min(1, safeValue / safeMax) : 0
+  const incomplete = hasLimit && safeValue > safeMax
+  const nearLimit = hasLimit && safeValue / safeMax >= 0.75
 
-  const tone = incomplete || safeValue >= safeMax ? 'text-monash-gold' : safeValue / safeMax >= 0.75 ? 'text-warning-700' : 'text-blue-600'
+  const tone =
+    incomplete || (hasLimit && safeValue >= safeMax)
+      ? 'text-monash-gold'
+      : nearLimit
+        ? 'text-warning-700'
+        : 'text-blue-600'
   const strokeColour =
-    incomplete || safeValue >= safeMax
+    incomplete || (hasLimit && safeValue >= safeMax)
       ? 'var(--monash-gold)'
-      : safeValue / safeMax >= 0.75
+      : nearLimit
         ? 'var(--warning-700)'
         : 'var(--monash-blue)'
 
@@ -45,12 +53,14 @@ export default function StatRing({
         role="meter"
         aria-busy={loading || undefined}
         aria-valuemin={0}
-        aria-valuemax={safeMax}
+        aria-valuemax={hasLimit ? safeMax : safeValue}
         aria-valuenow={safeValue}
         aria-valuetext={
           loading
             ? 'Loading credit points'
-            : `${safeValue} of ${safeMax} credit points used`
+            : hasLimit
+              ? `${safeValue} of ${safeMax} credit points used`
+              : `${safeValue} credit points used`
         }
         aria-label="Credit points used"
       >
@@ -94,7 +104,7 @@ export default function StatRing({
               onDark ? 'text-footer-muted' : 'text-ink-500',
             )}
           >
-            / {safeMax}
+            {hasLimit ? `/ ${safeMax}` : loading ? '/ --' : ''}
           </span>
         </div>
       </div>

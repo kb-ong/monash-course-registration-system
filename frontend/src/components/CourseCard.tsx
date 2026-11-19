@@ -15,6 +15,8 @@ interface CourseCardProps {
   registered: boolean
   periodOpen: boolean
   totalCredits: number
+  /** Configured semester credit limit from the registrations response. */
+  maxCredits?: number
   /** The semester registrations are accepted for; other terms are blocked. */
   activeSemester?: string
   onRegister: (course: Course) => void
@@ -26,6 +28,7 @@ export default function CourseCard({
   registered,
   periodOpen,
   totalCredits,
+  maxCredits,
   activeSemester,
   onRegister,
 }: CourseCardProps) {
@@ -38,6 +41,7 @@ export default function CourseCard({
     registered,
     periodOpen,
     totalCredits,
+    maxCredits,
     activeSemester,
   })
   const semesterBlocked = action.kind === 'semester'

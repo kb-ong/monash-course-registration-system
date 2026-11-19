@@ -9,8 +9,8 @@
 ## 1. Requirement
 
 > A student can see every course they are registered in for the active semester, in one place, with
-> total credit points against the 24-credit limit, a week-grid timetable, a printable view, and a CSV
-> download of the course list.
+> total credit points against the configured semester limit (FR10), the credits still available, a
+> week-grid timetable, a printable view, and a CSV download of the course list.
 
 ---
 
@@ -20,7 +20,7 @@
 | --- | --- |
 | B1 | `GET /api/registrations` is scoped to the **token subject** and the **active semester**. Registrations from other semesters are not returned (none can exist in Phase 1, but the query is semester-scoped regardless). |
 | B2 | `totalCredits` is computed server-side as Σ `creditHours`; the client must not recompute it as authority. |
-| B3 | `maxCredits` is always the literal `24`. |
+| B3 | `maxCredits` is the configured semester limit from `app.registration.max-credits` (default 24, FR10); `remainingCredits` is `max(0, maxCredits − totalCredits)`. |
 | B4 | `items` ordered `registeredAt` ASC, tiebreak `course.code` ASC. |
 | B5 | Empty state is `200` with `items: []` and `totalCredits: 0` — never 404. |
 | B6 | `availableSeats` inside each `course` is live at read time, so the student can see scarcity for their own courses. |
@@ -57,6 +57,7 @@ Authorization: Bearer <token>
   "semester": "2026-S2",
   "totalCredits": 12,
   "maxCredits": 24,
+  "remainingCredits": 12,
   "items": [
     {
       "registrationId": "1b7e5c44-6c2f-4c9e-8a11-3f0d2c9b7a55",
@@ -106,9 +107,9 @@ States:
 | Loading | first fetch | grid skeleton (7 columns × 5 rows of faint blocks) + 3 list skeletons |
 | Empty | `items: []` | centred `EmptyState`: lucide `CalendarX`, "You're not registered in anything yet.", sub "Browse the catalogue to find your first course.", primary CTA `Browse catalogue` → `/catalog`; CSV/Print disabled |
 | Populated | ≥ 1 item | grid + list, credit meter `12 / 24`, each list row shows code, name, credits, slots, seat meter, `Drop` |
-| Near limit | `totalCredits >= 18` | credit meter turns amber, caption "6 credits left" |
-| At limit | `totalCredits = 24` | meter gold, caption "Credit limit reached" |
-| Over (impossible) | `totalCredits > 24` | meter danger; render defensively, log a client warning |
+| Near limit | `totalCredits >= 75 % of maxCredits` | credit meter turns amber, caption "{remaining} credits left" |
+| At limit | `totalCredits = maxCredits` | meter gold, caption "Credit limit reached" |
+| Over (defensive only) | `totalCredits > maxCredits` | meter danger; render defensively, show "over the limit", log a client warning |
 | Error | 5xx | inline error panel + Retry; CSV/Print disabled |
 | Exporting | CSV click | button spinner until blob is created; then `URL.revokeObjectURL` |
 | Export empty | 0 items | export disabled with tooltip |
@@ -123,8 +124,8 @@ student name, semester and printed date; footer "Generated 8 November 2026".
 
 | ID | Type | Given | When | Then |
 | --- | --- | --- | --- | --- |
-| T-FR5-01 | happy | Aisha registered in `FIT1045` (6cp) and `FIT2004` (6cp) | `GET /api/registrations` | 200; `items` length 2; `totalCredits=12`; `maxCredits=24`; `semester=2026-S2`; each item has `registrationId`, `registeredAt`, full `course` |
-| T-FR5-02 | edge | Aisha registered in nothing | `GET /api/registrations` | 200; `items=[]`; `totalCredits=0`; `maxCredits=24` |
+| T-FR5-01 | happy | Aisha registered in `FIT1045` (6cp) and `FIT2004` (6cp) | `GET /api/registrations` | 200; `items` length 2; `totalCredits=12`; `maxCredits=24`; `remainingCredits=12`; `semester=2026-S2`; each item has `registrationId`, `registeredAt`, full `course` |
+| T-FR5-02 | edge | Aisha registered in nothing | `GET /api/registrations` | 200; `items=[]`; `totalCredits=0`; `maxCredits=24`; `remainingCredits=24` |
 | T-FR5-03 | happy | the two registrations above | `GET /api/registrations/export` | 200; `Content-Type` starts `text/csv`; `Content-Disposition` contains `attachment` and `filename="course-list.csv"` |
 | T-FR5-04 | happy | `FIT1045` has 2 slots | export body | first line is exactly `Course Code,Course Name,Credit Hours,Instructor,Day,Time,Location`; `FIT1045` appears on 2 lines; `Time` matches `^\d{2}:\d{2}-\d{2}:\d{2}$` |
 | T-FR5-05 | edge | location contains a comma | export body | that field is wrapped in double quotes and parses back to the original string with a CSV reader |
@@ -141,8 +142,9 @@ student name, semester and printed date; footer "Generated 8 November 2026".
 
 **FR5-AC1** — Given a student with registrations, when they open My Schedule, then every registration
 appears with course code, name, credits, instructor, day/time and location.
-**FR5-AC2** — Given the registrations response, then `totalCredits` equals the sum of `creditHours`
-and `maxCredits` is 24.
+**FR5-AC2** — Given the registrations response, then `totalCredits` equals the sum of `creditHours`,
+`maxCredits` equals the configured semester limit, and `remainingCredits = max(0, maxCredits −
+totalCredits)`.
 **FR5-AC3** — Given zero registrations, then the response is 200 with an empty `items` array and the UI
 shows an empty state with a catalogue CTA.
 **FR5-AC4** — Given a click on Export CSV, then a `course-list.csv` attachment downloads with the exact

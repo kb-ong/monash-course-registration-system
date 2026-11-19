@@ -1,8 +1,8 @@
 # Orchestration & Frozen Contracts
 
-Phase 1 build of the Monash Course Registration System, plus Phase 2 FR8 prerequisite validation
-and FR9 timetable clash detection.
-This file is the single source of truth for agent boundaries, branches, and the API contract.
+Phase 1 build of the Monash Course Registration System, plus Phase 2 FR8 prerequisite validation,
+FR9 timetable clash detection and FR10 configured semester credit-limit validation. This file is the
+single source of truth for agent boundaries, branches, and the API contract.
 Do not change frozen decisions without the orchestrator's explicit approval.
 
 ## Roles & ownership
@@ -26,6 +26,9 @@ If a tester/reviewer finds a defect, they report it; the owning coder fixes it.
   react-router-dom 6 + axios. Dev server proxies `/api` to `http://localhost:8080`.
 - Tests: JUnit 5 + Spring Boot Test + MockMvc. No Testcontainers, no external services.
 - Auth: `Authorization: Bearer <jwt>`; JWT subject = studentId; 120 min expiry.
+- FR10 credit limit: `app.registration.max-credits` (env `REGISTRATION_MAX_CREDITS`, default `24`,
+  positive integer, one value for the active semester). Enforcement and payloads use this value;
+  the UI never hardcodes a limit.
 - API base path: `/api`. Frontend must never hardcode `http://localhost:8080`.
 
 ## Frozen UI direction ("fancy university")
@@ -75,7 +78,9 @@ with the correct HTTP status. Validation errors: 400 `VALIDATION_ERROR`.
 ### Registration
 - `GET /api/registration-period` -> `{semester,startAt,endAt,open,serverTime}`
   - `open` = serverTime within [startAt, endAt].
-- `GET /api/registrations` (auth) -> `{semester, totalCredits, maxCredits:24, items:[{registrationId, registeredAt, course:{...}}]}`
+- `GET /api/registrations` (auth) -> `{semester, totalCredits, maxCredits, remainingCredits, items:[{registrationId, registeredAt, course:{...}}]}`
+  - `maxCredits` = `app.registration.max-credits` (default 24, FR10)
+  - `remainingCredits` = `max(0, maxCredits - totalCredits)`
 - `POST /api/registrations` (auth) body `{courseId}` -> 201 `{registrationId, message, course, availableSeats}`
   - 403 `REGISTRATION_CLOSED` when outside period
   - 409 `COURSE_FULL` when availableSeats = 0 (no record created, seat count unchanged)
@@ -85,7 +90,8 @@ with the correct HTTP status. Validation errors: 400 `VALIDATION_ERROR`.
   - 409 `TIMETABLE_CLASH` when the course's weekly slots overlap a course the student already
     holds in the active semester; `message` names every conflicting course and its overlapping
     day/time (FR9)
-  - 409 `CREDIT_LIMIT_EXCEEDED` when totalCredits + course.creditHours > 24
+  - 409 `CREDIT_LIMIT_EXCEEDED` when totalCredits + course.creditHours > maxCredits (configured,
+    default 24, FR10); the message names the limit and remaining credits
   - 404 `COURSE_NOT_FOUND`
   - Check order (normative): auth -> body -> period -> course in active semester -> duplicate ->
     prerequisites -> timetable clash -> credit limit -> capacity.

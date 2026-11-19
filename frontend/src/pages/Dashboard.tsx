@@ -48,6 +48,9 @@ export default function Dashboard() {
 
   const items = data?.items ?? []
   const totalCredits = data?.totalCredits ?? 0
+  const maxCredits = data?.maxCredits
+  const remainingCredits =
+    maxCredits === undefined ? null : Math.max(0, maxCredits - totalCredits)
   const semester = period ? semesterName(period.semester) : 'Semester 2 2026'
   const periodOpen = period?.open ?? false
 
@@ -63,7 +66,9 @@ export default function Dashboard() {
   const heroCopy =
     items.length === 0
       ? "You're not registered in anything yet."
-      : `You're registered in ${items.length} course${items.length === 1 ? '' : 's'} and ${totalCredits} of 24 credit points.`
+      : maxCredits === undefined
+        ? `You're registered in ${items.length} course${items.length === 1 ? '' : 's'} and ${totalCredits} credit points.`
+        : `You're registered in ${items.length} course${items.length === 1 ? '' : 's'} and ${totalCredits} of ${maxCredits} credit points.`
 
   return (
     <>
@@ -108,13 +113,15 @@ export default function Dashboard() {
               ease: [0.16, 1, 0.3, 1],
             }}
           >
-            <StatRing value={totalCredits} loading={loading} onDark />
+            <StatRing value={totalCredits} max={maxCredits} loading={loading} onDark />
             <p className="mt-3 max-w-[180px] text-center text-body-sm text-white/60">
               {loading
                 ? 'Loading your enrolment'
-                : totalCredits >= 24
-                  ? 'Credit limit reached'
-                  : `${24 - totalCredits} credits remaining`}
+                : maxCredits === undefined
+                  ? 'credit points'
+                  : totalCredits >= maxCredits
+                    ? 'Credit limit reached'
+                    : `${remainingCredits} credits remaining`}
             </p>
           </motion.div>
         </div>
@@ -251,7 +258,15 @@ export default function Dashboard() {
                 </div>
                 <div className="flex items-center justify-between gap-4 py-3">
                   <dt className="text-body-sm text-ink-500">Credit limit</dt>
-                  <dd className="tabular text-body font-semibold text-ink-900">24</dd>
+                  <dd className="tabular text-body font-semibold text-ink-900">
+                    {maxCredits ?? '—'}
+                  </dd>
+                </div>
+                <div className="flex items-center justify-between gap-4 py-3">
+                  <dt className="text-body-sm text-ink-500">Credits remaining</dt>
+                  <dd className="tabular text-body font-semibold text-ink-900">
+                    {remainingCredits ?? '—'}
+                  </dd>
                 </div>
                 <div className="flex items-center justify-between gap-4 pt-3">
                   <dt className="text-body-sm text-ink-500">Catalogue</dt>
@@ -374,6 +389,7 @@ export default function Dashboard() {
                     registered={isRegistered(course.id)}
                     periodOpen={periodOpen}
                     totalCredits={totalCredits}
+                    maxCredits={maxCredits}
                     activeSemester={period?.semester}
                     onRegister={setSelectedCourse}
                   />

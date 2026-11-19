@@ -59,6 +59,7 @@ class RegistrationViewTest extends BaseIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.totalCredits").value(12))
                 .andExpect(jsonPath("$.maxCredits").value(24))
+                .andExpect(jsonPath("$.remainingCredits").value(12))
                 .andExpect(jsonPath("$.semester").value("2026-S2")));
 
         assertThat(list.path("items").size()).isEqualTo(2);
@@ -77,7 +78,8 @@ class RegistrationViewTest extends BaseIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.items").isEmpty())
                 .andExpect(jsonPath("$.totalCredits").value(0))
-                .andExpect(jsonPath("$.maxCredits").value(24));
+                .andExpect(jsonPath("$.maxCredits").value(24))
+                .andExpect(jsonPath("$.remainingCredits").value(24));
     }
 
     @Test

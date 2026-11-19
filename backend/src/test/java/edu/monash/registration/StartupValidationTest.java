@@ -43,6 +43,27 @@ class StartupValidationTest {
                 .contains("2026-01-01T00:00");
     }
 
+    @Test
+    @DisplayName("T-FR10-07 max-credits below 1 refuses to start")
+    void tFr10_07_invalidMaxCreditsFailsFast() {
+        Throwable thrown = catchThrowable(() -> {
+            try (ConfigurableApplicationContext ignored = new SpringApplicationBuilder(
+                    CourseRegistrationApplication.class)
+                    .web(WebApplicationType.NONE)
+                    .profiles("test")
+                    .logStartupInfo(false)
+                    .run("--app.registration.max-credits=0")) {
+                fail("Application context must not start with a non-positive credit limit");
+            }
+        });
+
+        assertThat(thrown).as("startup failure").isNotNull();
+        Throwable root = rootCause(thrown);
+        assertThat(root.getMessage())
+                .contains("app.registration.max-credits")
+                .contains("at least 1");
+    }
+
     private Throwable rootCause(Throwable throwable) {
         List<Throwable> chain = new ArrayList<>();
         Throwable current = throwable;

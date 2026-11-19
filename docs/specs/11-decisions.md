@@ -25,6 +25,7 @@ that document is defective and this file wins.
 | **A-19** | Are attempts rejected by request validation audited? | **Yes.** A malformed, missing or type-invalid attempt that fails validation writes one audit row with `detail = VALIDATION_ERROR`, at the HTTP status the contract gives that failure. `POST /api/registrations` → **400 `VALIDATION_ERROR`** with `REGISTER_REJECTED / FAILURE` (e.g. `courseId` absent, not a string, or not a UUID). `DELETE /api/registrations/{registrationId}` with a non-UUID path value → **404 `REGISTRATION_NOT_FOUND`** with `DROP / FAILURE`: path ids are opaque, so a malformed id is reported exactly like an unknown id (FR4 §3, `00 §9.2`), while the audit row still records `detail = VALIDATION_ERROR` so the two cases remain distinguishable in the trail. `course_code` is `null` when the course cannot be resolved from the request (`00 §7.6` already permits this). Validation rejected **before** the student is known (i.e. `401 UNAUTHORIZED` on a missing/invalid token) is **not** audited — there is no authenticated subject and `audit_log.student_id` is `NOT NULL`; authentication failures belong to the application log (A-10). | `08 NFR4.1`, `08 NFR4.2` E-12/E-13 |
 | **A-21** | Phase 2 FR8: what is a prerequisite, what does "completed" mean, and where does the check sit? | Prerequisites are a self-referencing many-to-many edge on `course` (`course_prerequisite`), and completion is a separate `student_completed_course` history keyed by course **id**. A current-semester `registration` never counts as completion. Registration requires every prerequisite id in the history, otherwise **409 `PREREQUISITE_NOT_MET`** with every missing code sorted in `message`; the check is inserted between duplicate and timetable clash (see the subsection below). Course payloads carry `prerequisites: [{id,code,name}]`, ordered `code` ASC. The graph and history are seeded; there is no administration UI (NG3). | `12-fr8-prerequisites.md`, `00 §7.7–7.8`, `00 §8.5`, `00 §9.2`, `08 NFR4.2` E-14 |
 | **A-22** | Phase 2 FR9: how is a timetable clash defined, and where does the check sit? | Clash detection is a pairwise overlap of weekly `course_schedule` slots: same `day`, `start < otherEnd` and `otherStart < end` (half-open intervals, so touching boundaries are allowed). It compares the requested course against the student's **active-semester registrations only**, ignores other students, and blocks with **409 `TIMETABLE_CLASH`** naming every conflicting course and overlapping slot. The check sits between prerequisites and the credit limit; registrations are read under a pessimistic lock on the student row so two concurrent overlapping submissions admit at most one. No schema change. | `13-fr9-timetable-clash.md`, `00 §8.6`, `00 §9.2`, `08 NFR4.2` E-15 |
+| **A-23** | Phase 2 FR10: where does the semester credit limit live, and how is it surfaced? | The limit is the positive integer `app.registration.max-credits` (env `REGISTRATION_MAX_CREDITS`), default **24**, with one value for the active semester; non-positive values fail startup. Registration allows `total + creditHours <= maxCredits` and otherwise returns **409 `CREDIT_LIMIT_EXCEEDED`** after prerequisites and timetable clash and before capacity, with no row and no seat change; the message names the limit and the remaining credits. `GET /api/registrations` returns `maxCredits` and `remainingCredits = max(0, maxCredits − totalCredits)` alongside `totalCredits`; the SPA uses those fields and never hardcodes a number. The default 24 preserves Phase 1 behaviour; `REGISTRATION_MAX_CREDITS=18` reproduces the FR10 example. | `14-fr10-max-credit-hours.md`, `00 §9.2`, `00 §9.4` E7, `03-fr3-register-course.md`, `05-fr5-view-registered.md`, `09-ui-design-system.md` |
 
 ### A-21 — Phase 2 FR8 prerequisite model and check order
 
@@ -37,7 +38,7 @@ completion timestamp is modelled in Phase 2 — presence of the row is "complete
 
 **Check order (normative).** `POST /api/registrations` is now:
 auth → body → period → course exists in the active semester (A-17) → duplicate → **prerequisites** →
-credit limit → capacity (inside the lock). This preserves the Phase 1 relative order of every
+**timetable clash** → credit limit → capacity (inside the lock). This preserves the Phase 1 relative order of every
 existing check and inserts eligibility before the credit and capacity economics. Rationale: a
 student who is not eligible should learn that first; hiding it behind `COURSE_FULL` or
 `CREDIT_LIMIT_EXCEEDED` would imply that fixing credits or waiting for a seat could help. The
@@ -89,6 +90,31 @@ inverts it.
 **Seed.** No seed change: the Phase 1 schedule already contains overlaps (`FIT2004`/`FIT1051`,
 `FIT2099`/`FIT3077`, `FIT3143`/`MTH1010`), documented in `00 §8.6`.
 
+### A-23 — Phase 2 FR10 configured semester credit limit
+
+**Configuration.** `app.registration.max-credits` is bound by `RegistrationProperties` and validated
+with `@Min(1)`; it defaults to 24 and is overridable through `REGISTRATION_MAX_CREDITS`. The value is
+read on every register attempt and every registrations read, so a restart with a different value
+changes the enforcement and the payload together. It is a deployment/semester setting, not a
+per-student or per-program rule (AS5).
+
+**Enforcement.** `RegistrationService` computes the active-semester total server-side and rejects
+`total + course.creditHours > maxCredits` with 409 `CREDIT_LIMIT_EXCEEDED` after the FR8 prerequisite
+and FR9 timetable-clash checks and before the capacity check. Landing exactly on the limit succeeds;
+the failure creates no registration row and consumes no seat, and writes E-05 in NFR4.2. The message
+names the configured limit and the remaining credits, e.g.
+`Adding FIT3179 (6 credit points) would exceed the 18 credit point limit. You have 3 credit points remaining.`
+
+**Surface.** `GET /api/registrations` carries `totalCredits`, `maxCredits` and
+`remainingCredits = max(0, maxCredits − totalCredits)`. The SPA renders the dashboard ring, catalogue
+summary, course-detail note, register dialog and schedule meter from those fields; it removes the
+literal `24` and only shows the limit/remaining once the response has loaded. A 409 keeps the dialog
+open, shows the server message and refetches the registrations so a stale total is corrected.
+
+**Default.** 24 remains the shipped default so the Phase 1 API and tests are unchanged. The FR10
+example is exercised by starting with `REGISTRATION_MAX_CREDITS=18`; the configured-limit tests set
+that property explicitly.
+
 ---
 
 ## Supersession record
@@ -101,6 +127,8 @@ inverts it.
 | Failed register on an unknown course always details `COURSE_NOT_FOUND` | `08 NFR4.2` E-03 (implicitly exhaustive) | A-17 (`SEMESTER_NOT_ACTIVE` for a non-active-semester course) |
 | Attempts failing validation are not mentioned in the matrix | `08 NFR4.2` (implicitly exhaustive) | A-19 (`VALIDATION_ERROR` rows E-12/E-13) |
 | No schema constraints recorded for `course_schedule` | `00 §7.4` (checks stated but not enumerated as a decision) | A-18 |
+| `maxCredits` is "always the literal 24" | `05 §2` B3, `00 §9.4` E7 | A-23 (configured `app.registration.max-credits`, default 24, plus `remainingCredits`) |
+| "24 credit point limit" in dialog and error copy | `03 §1`, `03 §6`, `09 §5.7`, `09 §9` | A-23 (response-driven limit and remaining credits) |
 
 ---
 
@@ -120,9 +148,10 @@ inverts it.
 
 - `FIT3182` is full from startup: `capacity = 1`, one registration owned by Daniel (`32067890`),
   `availableSeats = 0`, C1 holds for all 19 seeded courses.
-- Daniel therefore begins with **6 credits** (25 % of the 24-credit cap); Aisha and Priya begin with
-  **0**. No seeded student is near the limit, so `CREDIT_LIMIT_EXCEEDED` tests must build their own
-  credits rather than rely on the seed.
+- Daniel therefore begins with **6 credits** (25 % of the default 24-credit cap); Aisha and Priya
+  begin with **0**. No seeded student is near the limit, so `CREDIT_LIMIT_EXCEEDED` tests must build
+  their own credits rather than rely on the seed. With `REGISTRATION_MAX_CREDITS=18`, 15 credits is
+  the demo "3 remaining" state for FR10.
 - `FIT3143` remains the single-free-seat course (`capacity 1`, `availableSeats 1`) used by the
   concurrency tests; `FIT3182` is the always-full course. The two must not be conflated.
 - A tester who needs a full course with a *known* incumbent drops Daniel's `FIT3182` registration,
