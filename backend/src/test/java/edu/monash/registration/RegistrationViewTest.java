@@ -44,7 +44,8 @@ class RegistrationViewTest extends BaseIntegrationTest {
                 List.of(TestFixtures.Slot.of("MON", "10:00", "12:00", "Clayton, \"Hall\" 25"),
                         TestFixtures.Slot.of("WED", "14:00", "16:00",
                                 "Clayton, Building 25, Rm 130")));
-        fit2004 = fixtures.singleSlotCourse("FIT2004", 6, 80, 80);
+        fit2004 = fixtures.course("FIT2004", 6, 80, 80,
+                TestFixtures.Slot.of("TUE", "10:00", "12:00", "Clayton, Building 25, Rm 125"));
         tst0009 = fixtures.singleSlotCourse("TST0009", 6, 10, 10);
     }
 
