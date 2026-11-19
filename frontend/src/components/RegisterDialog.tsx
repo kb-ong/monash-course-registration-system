@@ -74,6 +74,10 @@ export default function RegisterDialog({
         case 'CREDIT_LIMIT_EXCEEDED':
           setError(`That would take you to ${nextCredits} credits. Your limit is 24.`)
           break
+        case 'PREREQUISITE_NOT_MET':
+          // The server names every missing course in the message (FR8).
+          setError(apiError.message)
+          break
         case 'ALREADY_REGISTERED':
           void refresh()
           pushToast({ variant: 'info', title: "You're already registered in this course." })
@@ -138,6 +142,12 @@ export default function RegisterDialog({
           {slot ? ` · ${scheduleLine(slot)}` : ''}
         </p>
         {slot ? <p className="text-body-sm text-ink-500">{slot.location}</p> : null}
+        {course.prerequisites.length > 0 ? (
+          <p className="pt-1 text-body-sm text-ink-500">
+            Requires{' '}
+            {course.prerequisites.map((prerequisite) => prerequisite.code).join(', ')}
+          </p>
+        ) : null}
       </div>
 
       <p className="mt-4 text-body text-ink-700">

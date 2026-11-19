@@ -2,12 +2,18 @@ package edu.monash.registration.domain;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.JoinTable;
+import jakarta.persistence.ManyToMany;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 import java.time.Instant;
+import java.util.LinkedHashSet;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -43,6 +49,21 @@ public class Student {
 
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
+
+    /**
+     * FR8: the student's completed-course history. Deliberately separate from {@code registration}:
+     * registering for a course in the current semester does not count as having completed it. Rows
+     * are seeded (there is no admin/academic-history UI in Phase 2).
+     */
+    @ManyToMany(fetch = FetchType.LAZY)
+    @JoinTable(
+            name = "student_completed_course",
+            joinColumns = @JoinColumn(name = "student_id"),
+            inverseJoinColumns = @JoinColumn(name = "course_id"),
+            uniqueConstraints = @UniqueConstraint(
+                    name = "uk_student_completed_course",
+                    columnNames = {"student_id", "course_id"}))
+    private Set<Course> completedCourses = new LinkedHashSet<>();
 
     protected Student() {
     }
@@ -83,5 +104,13 @@ public class Student {
 
     public Instant getCreatedAt() {
         return createdAt;
+    }
+
+    public Set<Course> getCompletedCourses() {
+        return completedCourses;
+    }
+
+    public void markCompleted(Course course) {
+        completedCourses.add(course);
     }
 }

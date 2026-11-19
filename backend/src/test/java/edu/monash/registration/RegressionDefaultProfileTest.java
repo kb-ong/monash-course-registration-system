@@ -16,6 +16,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.transaction.annotation.Transactional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -112,6 +113,55 @@ class RegressionDefaultProfileTest {
                     .isEqualTo(course.getCapacity());
         }
         assertThat(registrationRepository.count()).as("exactly one seeded registration").isEqualTo(1);
+    }
+
+    @Test
+    @Transactional
+    @DisplayName("T-FR8-11 shipped seed carries the FR8 prerequisite graph and completion history")
+    void tFr8_11_seededPrerequisites() {
+        Course fit1008 = courseByCode(courseRepository.findBySemesterOrderByCodeAsc("2026-S1"),
+                "FIT1008");
+        Course fit1047 = courseByCode(courseRepository.findBySemesterOrderByCodeAsc("2026-S1"),
+                "FIT1047");
+        Course mth1020 = courseByCode(courseRepository.findBySemesterOrderByCodeAsc("2026-S1"),
+                "MTH1020");
+        List<Course> active = courseRepository.findBySemesterOrderByCodeAsc("2026-S2");
+
+        assertThat(codes(courseByCode(active, "FIT2004"))).containsExactly("FIT1008");
+        assertThat(codes(courseByCode(active, "FIT2099"))).containsExactly("FIT1008");
+        assertThat(codes(courseByCode(active, "FIT3077"))).containsExactly("FIT1008", "FIT1047");
+        assertThat(codes(courseByCode(active, "MTH1030"))).containsExactly("MTH1020");
+        assertThat(codes(courseByCode(active, "FIT1045"))).isEmpty();
+
+        // Completion history is separate from registration and matches the spec §8.5 table.
+        assertThat(completedCodes("32012345")).containsExactly("FIT1008", "MTH1020");
+        assertThat(completedCodes("32067890")).containsExactly("FIT1008", "FIT1047");
+        assertThat(completedCodes("32011111")).isEmpty();
+
+        // The completion rows reference the prior-semester course rows, not the active ones.
+        assertThat(fit1008.getSemester()).isEqualTo("2026-S1");
+        assertThat(fit1047.getSemester()).isEqualTo("2026-S1");
+        assertThat(mth1020.getSemester()).isEqualTo("2026-S1");
+
+        // Admin/registration invariants are untouched by FR8.
+        assertThat(registrationRepository.count()).isEqualTo(1);
+        assertThat(studentRepository.count()).isEqualTo(3);
+        assertThat(courseRepository.count()).isEqualTo(19);
+    }
+
+    private List<String> codes(Course course) {
+        return course.getPrerequisites().stream()
+                .map(Course::getCode)
+                .sorted()
+                .toList();
+    }
+
+    private List<String> completedCodes(String studentId) {
+        return studentRepository.findByStudentId(studentId).orElseThrow()
+                .getCompletedCourses().stream()
+                .map(Course::getCode)
+                .sorted()
+                .toList();
     }
 
     private Course courseByCode(List<Course> courses, String code) {

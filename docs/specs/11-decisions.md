@@ -23,6 +23,36 @@ that document is defective and this file wins.
 | **A-17** | Registering for a course that exists but belongs to a non-active semester | Returns **404 `COURSE_NOT_FOUND`** (the same status and envelope as an unknown id — no semester oracle), and writes one audit row `REGISTER_REJECTED / FAILURE` with `detail = SEMESTER_NOT_ACTIVE`. The semester predicate is part of the **locking** query (`… where c.id = :id and c.semester = :activeSemester`), not a check performed before the lock, so the semester test and the seat decrement are atomic with respect to a semester change. Drop is unaffected: a registration can only exist for a course that was registrable, and dropping is scoped by registration id. | `00 §5.1` step 2, `00 §9.2`, `08 NFR4.2` E-11 |
 | **A-18** | Which schema-level constraints are normative for Phase 1? | Four, in addition to the unique/foreign keys already stated: `course.capacity >= 0`; `course.credit_hours IN (3, 6)`; `course.available_seats BETWEEN 0 AND capacity`; `course_schedule.end_time > start_time`. These are database `CHECK` constraints, not service-layer-only validation, so a bad row cannot be inserted by the seeder or a test fixture. `capacity = 0` is **legal but unused** by the seed (the full demo row is capacity 1 per A-16); rejecting `capacity = 0` at the schema level is a deviation from this decision. `course_schedule.day IN ('MON'…'SUN')` remains normative per `00 §7.4` and is unchanged by this entry. | `00 §7.3`, `00 §7.4` |
 | **A-19** | Are attempts rejected by request validation audited? | **Yes.** A malformed, missing or type-invalid attempt that fails validation writes one audit row with `detail = VALIDATION_ERROR`, at the HTTP status the contract gives that failure. `POST /api/registrations` → **400 `VALIDATION_ERROR`** with `REGISTER_REJECTED / FAILURE` (e.g. `courseId` absent, not a string, or not a UUID). `DELETE /api/registrations/{registrationId}` with a non-UUID path value → **404 `REGISTRATION_NOT_FOUND`** with `DROP / FAILURE`: path ids are opaque, so a malformed id is reported exactly like an unknown id (FR4 §3, `00 §9.2`), while the audit row still records `detail = VALIDATION_ERROR` so the two cases remain distinguishable in the trail. `course_code` is `null` when the course cannot be resolved from the request (`00 §7.6` already permits this). Validation rejected **before** the student is known (i.e. `401 UNAUTHORIZED` on a missing/invalid token) is **not** audited — there is no authenticated subject and `audit_log.student_id` is `NOT NULL`; authentication failures belong to the application log (A-10). | `08 NFR4.1`, `08 NFR4.2` E-12/E-13 |
+| **A-21** | Phase 2 FR8: what is a prerequisite, what does "completed" mean, and where does the check sit? | Prerequisites are a self-referencing many-to-many edge on `course` (`course_prerequisite`), and completion is a separate `student_completed_course` history keyed by course **id**. A current-semester `registration` never counts as completion. Registration requires every prerequisite id in the history, otherwise **409 `PREREQUISITE_NOT_MET`** with every missing code sorted in `message`; the check is inserted between duplicate and credit limit (see the subsection below). Course payloads carry `prerequisites: [{id,code,name}]`, ordered `code` ASC. The graph and history are seeded; there is no administration UI (NG3). | `12-fr8-prerequisites.md`, `00 §7.7–7.8`, `00 §8.5`, `00 §9.2`, `08 NFR4.2` E-14 |
+
+### A-21 — Phase 2 FR8 prerequisite model and check order
+
+**Model.** `course_prerequisite (course_id, prerequisite_course_id)` records "course_id requires
+prerequisite_course_id"; `student_completed_course (student_id, course_id)` records history. Both
+have composite unique constraints. The check compares **course ids**, not codes, so a prerequisite
+and its completion must reference the same catalogue row. A course cannot require itself; longer
+cycles are a catalogue-data concern of the out-of-scope administration path. No grade, term or
+completion timestamp is modelled in Phase 2 — presence of the row is "completed".
+
+**Check order (normative).** `POST /api/registrations` is now:
+auth → body → period → course exists in the active semester (A-17) → duplicate → **prerequisites** →
+credit limit → capacity (inside the lock). This preserves the Phase 1 relative order of every
+existing check and inserts eligibility before the credit and capacity economics. Rationale: a
+student who is not eligible should learn that first; hiding it behind `COURSE_FULL` or
+`CREDIT_LIMIT_EXCEEDED` would imply that fixing credits or waiting for a seat could help. The
+capacity lock and atomic decrement are unchanged.
+
+**Response.** 409 `PREREQUISITE_NOT_MET`; no registration row and no seat change. The frozen
+error envelope is unchanged, so the missing course codes are carried in `message`, e.g.
+`Cannot register for FIT3077: missing prerequisites FIT1008, FIT1047.` Course payloads also expose
+`prerequisites` for pre-registration display.
+
+**Audit.** Exactly one `REGISTER_REJECTED / FAILURE / PREREQUISITE_NOT_MET` row with the resolved
+requested course code (NFR4 E-14).
+
+**Seed.** The graph and history are normative in `00 §8.5`: Aisha completed `FIT1008`/`MTH1020`,
+Daniel `FIT1008`/`FIT1047`, Priya none; `FIT2004`/`FIT2099` require `FIT1008`, `FIT3077` requires
+both, and `MTH1030` requires `MTH1020`. No other seed invariant changes.
 
 ---
 
@@ -62,6 +92,11 @@ that document is defective and this file wins.
   concurrency tests; `FIT3182` is the always-full course. The two must not be conflated.
 - A tester who needs a full course with a *known* incumbent drops Daniel's `FIT3182` registration,
   observes `availableSeats` become 1, then re-registers it. This is the positive control for C1.
+- FR8 adds four registration-blocking demo courses: Aisha can register `FIT2004`, `FIT2099` and
+  `MTH1030` but is denied `FIT3077` (missing `FIT1047`); Daniel can register all four; Priya is
+  denied on every prerequisite course. Prerequisite edges are on `FIT2004`, `FIT2099`, `FIT3077` and
+  `MTH1030` only, so all Phase 1 capacity/concurrency courses (`FIT3143`, `FIT3182`, `FIT1045`) and
+  every existing Phase 1 test remain unaffected.
 
 ---
 

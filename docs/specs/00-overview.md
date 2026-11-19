@@ -1,7 +1,7 @@
 # 00 — System Overview & Contract Reference
 
-**Project:** Monash Course Registration System — Phase 1
-**Status:** Approved for build (spec baseline v1.0)
+**Project:** Monash Course Registration System — Phase 1 (FR1–FR7) + Phase 2 FR8
+**Status:** Phase 1 baseline v1.0; Phase 2 FR8 added in v1.1
 **Source of truth:** [`../../ORCHESTRATION.md`](../../ORCHESTRATION.md). Where this document and
 ORCHESTRATION.md disagree, ORCHESTRATION.md wins and this document is defective.
 **Audience:** coder-backend, coder-frontend, tester, reviewer.
@@ -11,9 +11,11 @@ ORCHESTRATION.md disagree, ORCHESTRATION.md wins and this document is defective.
 ## 1. Purpose
 
 Phase 1 delivers a single, coherent student-facing workflow: **log in → browse the semester
-catalogue → register → review your timetable → drop**. It must look and feel like a serious
-university product ("fancy university"), and it must be *correct under concurrency* — the seat
-counter is the one place where a plausible-looking implementation is routinely wrong.
+catalogue → register → review your timetable → drop**. Phase 2 starts with **FR8 prerequisite
+validation**: registration also verifies that the student's completed-course history contains every
+prerequisite of the requested course. The product must look and feel like a serious university
+product ("fancy university"), and it must be *correct under concurrency* — the seat counter is the
+one place where a plausible-looking implementation is routinely wrong.
 
 The system is a teaching-scale, single-semester, single-university application. It is not a
 general student administration system.
@@ -38,17 +40,20 @@ general student administration system.
 - FR1 Student login (JWT + BCrypt), FR2 catalogue browse/search, FR3 registration,
   FR4 drop, FR5 registered-course view + CSV + print, FR6 capacity validation (incl. concurrency),
   FR7 registration-period control.
+- **Phase 2:** FR8 prerequisite validation before registration, with missing prerequisites shown to
+  the student and a prerequisite section on the course detail page.
 - NFR1 performance, NFR2 security, NFR3 availability, NFR4 audit logging, NFR5 usability.
 - Responsive desktop + mobile web, keyboard accessible, WCAG 2.1 AA contrast.
-- Seeded demo data (3 students, 16 active-semester courses, 3 prior-semester courses).
+- Seeded demo data (3 students, 16 active-semester courses, 3 prior-semester courses, a prerequisite
+  graph and completion history).
 
-### 3.2 Non-goals (explicitly out of Phase 1)
+### 3.2 Non-goals (explicitly out of the delivered scope)
 
 | # | Non-goal | Rationale |
 | --- | --- | --- |
 | NG1 | Admin/CRUD UI for courses, students, periods | No admin persona in Phase 1 |
 | NG2 | Timetable **clash detection** | Requires a scheduling engine; Phase 2. The UI shows times, it does not validate overlaps |
-| NG3 | Prerequisites / corequisites / program rules | Catalogue is open enrolment |
+| NG3 | Corequisites, program rules, prerequisite **administration UI** | FR8 covers prerequisites only; the prerequisite graph and completion history are seeded. Corequisites and program rules remain out of scope |
 | NG4 | Waitlists, seat offers, approvals | Contract defines hard 409 `COURSE_FULL` only |
 | NG5 | Payments, fees, invoices | Out of domain |
 | NG6 | Self-registration, password reset, MFA, SSO | Students are pre-provisioned; password is seeded |
@@ -70,6 +75,8 @@ general student administration system.
 | **Capacity** | Maximum enrolments a course permits. Immutable in Phase 1. |
 | **Available seats** | `capacity − current enrolments`. Invariant: `0 ≤ availableSeats ≤ capacity`. |
 | **Full** | `availableSeats = 0`. Registration returns 409 `COURSE_FULL`. |
+| **Prerequisite** | A course that must appear in the student's completed-course history before the dependent course can be registered. |
+| **Completed course** | A row in `student_completed_course` linking a student to a course row. A current-semester registration is **not** a completion. |
 | **Registration** | A persisted `(student, course)` link with a timestamp. Unique per pair. |
 | **Drop** | Deletion of a registration; returns one seat. |
 | **Registration window** | Half-open? **No** — closed interval `[startAt, endAt]`, inclusive at both ends (see FR7-AC3/AC4). |
@@ -122,16 +129,17 @@ sequenceDiagram
     S->>S: 1. period open? else 403 REGISTRATION_CLOSED
     S->>DB: 2. course exists in active semester? else 404 COURSE_NOT_FOUND
     S->>DB: 3. already registered? else 409 ALREADY_REGISTERED
-    S->>DB: 4. sum credits + new > 24? else 409 CREDIT_LIMIT_EXCEEDED
-    S->>DB: 5. SELECT course FOR UPDATE
-    S->>S: 6. seats > 0? else 409 COURSE_FULL
-    S->>DB: 7. availableSeats-1, INSERT registration
-    S->>DB: 8. INSERT audit REGISTER / SUCCESS
+    S->>DB: 4. all prerequisites completed? else 409 PREREQUISITE_NOT_MET
+    S->>DB: 5. sum credits + new > 24? else 409 CREDIT_LIMIT_EXCEEDED
+    S->>DB: 6. SELECT course FOR UPDATE
+    S->>S: 7. seats > 0? else 409 COURSE_FULL
+    S->>DB: 8. availableSeats-1, INSERT registration
+    S->>DB: 9. INSERT audit REGISTER / SUCCESS
     S-->>C: result
     C-->>UI: 201 {registrationId, message, course, availableSeats}
 ```
 
-The numeric order in steps 1–6 is **normative** (see §9.3, ambiguity A-03).
+The order of steps 1–7 is **normative** (see §9.3, A-03, A-21).
 
 ---
 
@@ -178,6 +186,8 @@ erDiagram
     STUDENT ||--o{ REGISTRATION : places
     COURSE ||--o{ REGISTRATION : receives
     COURSE ||--|{ COURSE_SCHEDULE : "meets as"
+    COURSE ||--o{ COURSE : "requires (course_prerequisite)"
+    STUDENT ||--o{ COURSE : "completed (student_completed_course)"
     AUDIT_LOG }o..o{ STUDENT : "denormalised studentId"
     STUDENT {
         uuid id PK
@@ -213,6 +223,14 @@ erDiagram
         uuid student_id FK
         uuid course_id FK
         timestamp registered_at
+    }
+    COURSE_PREREQUISITE {
+        uuid course_id PK,FK
+        uuid prerequisite_course_id PK,FK
+    }
+    STUDENT_COMPLETED_COURSE {
+        uuid student_id PK,FK
+        uuid course_id PK,FK
     }
     AUDIT_LOG {
         bigint id PK
@@ -300,6 +318,26 @@ never 500.
 
 See NFR4 (§[08](./08-non-functional.md)) for the exact event matrix.
 
+### 7.7 `course_prerequisite`
+
+| Column | Type | Constraints | Notes |
+| --- | --- | --- | --- |
+| `course_id` | `UUID` | FK → `course.id`, not null | dependent course |
+| `prerequisite_course_id` | `UUID` | FK → `course.id`, not null | required completed course |
+
+**Unique constraint `uk_course_prerequisite (course_id, prerequisite_course_id)`.** A course cannot
+require itself; longer cycles are a catalogue-data concern (A-21).
+
+### 7.8 `student_completed_course`
+
+| Column | Type | Constraints | Notes |
+| --- | --- | --- | --- |
+| `student_id` | `UUID` | FK → `student.id`, not null | |
+| `course_id` | `UUID` | FK → `course.id`, not null | completed course row |
+
+**Unique constraint `uk_student_completed_course (student_id, course_id)`.** A current-semester
+`registration` is not a completion; completion history is seeded in Phase 2 (A-21).
+
 ---
 
 ## 8. Seed data (normative for tests)
@@ -352,6 +390,32 @@ Seeder must use **fixed UUIDs** (constant `UUID.fromString(...)` values) and fix
 integration tests can reference rows without lookup-by-name. Seeder is idempotent: if
 `studentRepository.count() > 0`, it does nothing.
 
+### 8.5 FR8 prerequisite graph and completion history (normative)
+
+Prerequisite edges (5 total):
+
+| Dependent course | Prerequisite(s) |
+| --- | --- |
+| `FIT2004` | `FIT1008` |
+| `FIT2099` | `FIT1008` |
+| `FIT3077` | `FIT1008`, `FIT1047` |
+| `MTH1030` | `MTH1020` |
+| every other course | none |
+
+Completion history (4 rows total):
+
+| studentId | Completed courses |
+| --- | --- |
+| `32012345` Aisha Rahman | `FIT1008`, `MTH1020` |
+| `32067890` Daniel Tan | `FIT1008`, `FIT1047` |
+| `32011111` Priya Nair | none |
+
+Consequences: Aisha may register `FIT2004`/`FIT2099`/`MTH1030` but not `FIT3077` (missing
+`FIT1047`); Daniel may register all four; Priya is denied on every prerequisite course and is the
+demo "missing prerequisite" student. No other seed row changes: 3 students, 19 courses and exactly
+1 seeded registration remain (A-16). The prerequisite courses are the prior-semester rows
+(`FIT1008`, `FIT1047`, `MTH1020`), and their ids are referenced by the completion rows.
+
 ---
 
 ## 9. API contract (restated precisely)
@@ -390,6 +454,7 @@ Timestamps: see §9.6. Auth: `Authorization: Bearer <jwt>`.
 | 409 | `COURSE_FULL` | `availableSeats = 0` | `POST /registrations` |
 | 409 | `ALREADY_REGISTERED` | unique `(student, course)` already exists | `POST /registrations` |
 | 409 | `CREDIT_LIMIT_EXCEEDED` | `totalCredits + course.creditHours > 24` | `POST /registrations` |
+| 409 | `PREREQUISITE_NOT_MET` | one or more prerequisites are absent from the student's completion history; `message` names every missing course code, sorted ASC | `POST /registrations` |
 | 500 | `INTERNAL_ERROR` | unexpected server fault (never leaks detail) | all |
 
 `UNAUTHORIZED` and `INTERNAL_ERROR` are **elaborations** consistent with the frozen envelope; the
@@ -416,8 +481,8 @@ remain distinguishable in the audit trail (A-19).
 | E10 | GET | `/api/registrations/export` | bearer | 200 `text/csv` | 401 |
 
 **Validation precedence** for E8 (normative): auth → body → period → course exists in the active
-semester (A-17) → duplicate → credit limit → capacity. For E9: auth → registration exists →
-ownership → period.
+semester (A-17) → duplicate → **prerequisite completion (FR8)** → credit limit → capacity. For E9:
+auth → registration exists → ownership → period.
 
 ### 9.4 Payloads
 
@@ -487,10 +552,19 @@ Ordered `code` DESC. `name` derived: `Semester {n} {year}` from `YYYY-Sn`.
         "endTime": "12:00",
         "location": "Clayton, Building 25, Rm 125"
       }
+    ],
+    "prerequisites": [
+      {
+        "id": "cccccccc-0000-4000-8000-000000000001",
+        "code": "FIT1008",
+        "name": "Introduction to Computer Science"
+      }
     ]
   }
 ]
 ```
+
+`prerequisites` is ordered `code` ASC and is `[]` when the course has none (FR8, E4/E5/E7/E8).
 
 #### E5 `GET /api/courses/{id}` → `200` single course object; unknown/invalid UUID → 404 `COURSE_NOT_FOUND`.
 
@@ -618,7 +692,7 @@ Period config values (`app.registration.period-*`) are wall-clock in the univers
 | --- | --- | --- | --- |
 | A-01 | "one course at capacity 0 seeded as full" | **Superseded by A-16**: the seeded full course is `capacity = 1` with exactly one registration held by another student, so `availableSeats = 0` and C1 holds. Capacity `0` remains legal at schema level (A-18) but is not used by the seed | §8.2, [11](./11-decisions.md) |
 | A-02 | Enum lacks a rejected-drop action | Failed drops are `action=DROP, outcome=FAILURE`; failed registrations are `action=REGISTER_REJECTED, outcome=FAILURE`. No new enum values | NFR4 |
-| A-03 | Order of 409 checks in E8 | period → exists → duplicate → credit limit → capacity (capacity last, inside the lock) | §9.3 |
+| A-03 | Order of 409 checks in E8 | period → exists → duplicate → credit limit → capacity (capacity last, inside the lock). **Phase 2 (A-21) inserts prerequisites between duplicate and credit limit** | §9.3 |
 | A-04 | Wrong password vs unknown user | Same 401 `INVALID_CREDENTIALS`; dummy BCrypt compare to equalise timing | FR1 |
 | A-05 | Unknown `semester` query value | 400 `VALIDATION_ERROR` (not empty list) — surfaces client bugs | FR2 |
 | A-06 | Empty catalogue/registrations | `200 []` / `200` with empty items; never 404 | FR2, FR5 |
@@ -633,8 +707,9 @@ Period config values (`app.registration.period-*`) are wall-clock in the univers
 
 **The series continues at A-16 in [11 — Decision Log](./11-decisions.md)** (A-15 is unassigned; see the
 note there). A-16…A-19 cover the seed-as-full-course shape, the non-active-semester registration path,
-the normative schema constraints, and validation-rejected audit rows. Decisions in 11 supersede the
-text they name.
+the normative schema constraints, and validation-rejected audit rows; A-20 is deferred and A-21
+records the Phase 2 prerequisite model and check order. Decisions in 11 supersede the text they
+name.
 
 ---
 
@@ -647,7 +722,7 @@ text they name.
 | AS3 | ≤ 200 courses per semester, ≤ 40 per student | No pagination needed |
 | AS4 | Students pre-provisioned; credentials seeded | FR1 needs registration flow |
 | AS5 | `maxCredits = 24` for every student, no per-program variation | Credit rule changes |
-| AS6 | Enrolment is open — no prerequisites, no approvals | FR3 gains a rule engine |
+| AS6 | Prerequisites are a static seeded graph; no corequisites or program rules; no approvals | FR8's data source and rule engine change |
 | AS7 | Data loss on restart is acceptable for the demo | Persistence work required |
 | AS8 | Modern evergreen browsers (last 2 versions) | Transpile targets change |
 | AS9 | Network latency to the API < 150 ms locally | NFR1 thresholds need restating |
@@ -668,7 +743,7 @@ text they name.
 | RK7 | Design drift between two frontend passes | Medium | Medium | §[09](./09-ui-design-system.md) is prescriptive (tokens, sizes, states) |
 | RK8 | Token theft via XSS | Low | High | No `dangerouslySetInnerHTML`; no remote scripts; short 120-min expiry |
 | RK9 | BCrypt cost 10 slows login under load | Low | Low | Acceptable at demo scale; documented |
-| RK10 | Scope creep into clash detection / waitlists | High | Medium | NG2, NG4 stated as non-goals |
+| RK10 | Scope creep into clash detection / waitlists / corequisites | High | Medium | NG2, NG4, NG3 stated as non-goals; FR8 stays prerequisite-only |
 
 ---
 
@@ -683,10 +758,11 @@ text they name.
 | FR5 View Registered Courses | [05-fr5-view-registered.md](./05-fr5-view-registered.md) | backend + frontend |
 | FR6 Capacity Validation | [06-fr6-capacity.md](./06-fr6-capacity.md) | backend (critical) |
 | FR7 Registration Period | [07-fr7-registration-period.md](./07-fr7-registration-period.md) | backend + frontend |
+| **FR8 Prerequisite Validation (Phase 2)** | [12-fr8-prerequisites.md](./12-fr8-prerequisites.md) | backend + frontend |
 | NFR1–NFR5 | [08-non-functional.md](./08-non-functional.md) | all |
 | UI design system | [09-ui-design-system.md](./09-ui-design-system.md) | frontend |
 | Test strategy | [10-test-strategy.md](./10-test-strategy.md) | tester |
-| Decisions A-16…A-19 | [11-decisions.md](./11-decisions.md) | planner |
+| Decisions A-16…A-21 | [11-decisions.md](./11-decisions.md) | planner |
 
 **User stories** (referenced by every FR file):
 

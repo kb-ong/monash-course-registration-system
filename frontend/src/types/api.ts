@@ -7,6 +7,12 @@ export interface CourseSchedule {
   location: string
 }
 
+export interface Prerequisite {
+  id: string
+  code: string
+  name: string
+}
+
 export interface Course {
   id: string
   code: string
@@ -19,6 +25,7 @@ export interface Course {
   faculty: string
   description: string
   schedule: CourseSchedule[]
+  prerequisites: Prerequisite[]
 }
 
 export interface Student {
@@ -83,6 +90,7 @@ export type ErrorCode =
   | 'COURSE_FULL'
   | 'ALREADY_REGISTERED'
   | 'CREDIT_LIMIT_EXCEEDED'
+  | 'PREREQUISITE_NOT_MET'
   | 'INTERNAL_ERROR'
   | 'NETWORK_ERROR'
   | 'UNKNOWN_ERROR'

@@ -14,6 +14,7 @@ import edu.monash.registration.error.CourseFullException;
 import edu.monash.registration.error.CourseNotFoundException;
 import edu.monash.registration.error.CreditLimitExceededException;
 import edu.monash.registration.error.NotOwnerException;
+import edu.monash.registration.error.PrerequisiteNotMetException;
 import edu.monash.registration.error.RegistrationClosedException;
 import edu.monash.registration.error.RegistrationNotFoundException;
 import edu.monash.registration.error.UnauthorizedException;
@@ -25,7 +26,9 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -39,8 +42,8 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>Seat arithmetic happens only while holding a {@code SELECT ... FOR UPDATE} lock on the course
  * row, inside the same transaction that inserts or deletes the registration. Check order is
- * normative: period → course exists → duplicate → credit limit → capacity (A-03) for register, and
- * registration exists → owner → period for drop.
+ * normative: period → course exists → duplicate → prerequisites → credit limit → capacity (A-03,
+ * A-21) for register, and registration exists → owner → period for drop.
  */
 @Service
 public class RegistrationService {
@@ -100,6 +103,22 @@ public class RegistrationService {
         if (registrationRepository.existsByStudentIdAndCourseId(student.getId(), course.getId())) {
             auditFailure(studentId, course.getCode(), AuditAction.REGISTER_REJECTED, "ALREADY_REGISTERED");
             throw new AlreadyRegisteredException();
+        }
+
+        // FR8: completion history is the only evidence; a current-semester registration for the
+        // same course is not a completion (A-21).
+        Set<UUID> completedCourseIds = student.getCompletedCourses().stream()
+                .map(Course::getId)
+                .collect(Collectors.toSet());
+        List<String> missingPrerequisites = course.getPrerequisites().stream()
+                .filter(prerequisite -> !completedCourseIds.contains(prerequisite.getId()))
+                .map(Course::getCode)
+                .sorted()
+                .toList();
+        if (!missingPrerequisites.isEmpty()) {
+            auditFailure(studentId, course.getCode(), AuditAction.REGISTER_REJECTED,
+                    "PREREQUISITE_NOT_MET");
+            throw new PrerequisiteNotMetException(course.getCode(), missingPrerequisites);
         }
 
         int currentCredits = currentCredits(student.getId());

@@ -10,6 +10,7 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.context.annotation.Profile;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 /**
@@ -29,9 +30,9 @@ public class TestSupportConfig {
     @Bean
     public TestFixtures testFixtures(StudentRepository studentRepository,
             CourseRepository courseRepository, RegistrationRepository registrationRepository,
-            AuditLogRepository auditLogRepository, PasswordEncoder passwordEncoder,
-            JwtProperties jwtProperties) {
+            AuditLogRepository auditLogRepository, JdbcTemplate jdbcTemplate,
+            PasswordEncoder passwordEncoder, JwtProperties jwtProperties) {
         return new TestFixtures(studentRepository, courseRepository, registrationRepository,
-                auditLogRepository, passwordEncoder, jwtProperties);
+                auditLogRepository, jdbcTemplate, passwordEncoder, jwtProperties);
     }
 }

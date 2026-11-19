@@ -214,9 +214,32 @@ export default function CourseDetail() {
               <h2 id="assessment-heading" className="font-display text-h2 text-ink-900">
                 Assessment &amp; prerequisites
               </h2>
-              <p className="mt-3 max-w-[68ch] text-body text-ink-700">
-                None for Phase 1. This catalogue is open enrolment with no prerequisite checks and no
-                timetable clash detection.
+              {course.prerequisites.length === 0 ? (
+                <p className="mt-3 max-w-[68ch] text-body text-ink-700">
+                  No prerequisites. This unit is open to students in the active semester.
+                </p>
+              ) : (
+                <>
+                  <p className="mt-3 max-w-[68ch] text-body text-ink-700">
+                    You must have completed the following before you can register:
+                  </p>
+                  <ul className="mt-4 max-w-[68ch] divide-y divide-line-200 rounded-lg border border-line-200 bg-surface">
+                    {course.prerequisites.map((prerequisite) => (
+                      <li
+                        key={prerequisite.id}
+                        className="flex flex-col gap-1 px-5 py-3 sm:flex-row sm:items-baseline sm:gap-4"
+                      >
+                        <span className="w-24 shrink-0 text-overline uppercase tracking-[0.08em] text-blue-600">
+                          {prerequisite.code}
+                        </span>
+                        <span className="text-body text-ink-700">{prerequisite.name}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+              <p className="mt-3 max-w-[68ch] text-body-sm text-ink-500">
+                Timetable clashes are not detected — check the class times above.
               </p>
             </section>
           </div>

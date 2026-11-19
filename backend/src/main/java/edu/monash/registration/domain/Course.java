@@ -7,11 +7,16 @@ import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.JoinTable;
+import jakarta.persistence.ManyToMany;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import org.hibernate.annotations.Check;
 
@@ -66,6 +71,21 @@ public class Course {
             fetch = FetchType.LAZY)
     private List<CourseSchedule> schedule = new ArrayList<>();
 
+    /**
+     * FR8: courses that must appear in the student's completed-course history before this course
+     * can be registered. The self-referencing join keeps prerequisites as real course rows, so a
+     * missing prerequisite always has a code and name to show the student.
+     */
+    @ManyToMany(fetch = FetchType.LAZY)
+    @JoinTable(
+            name = "course_prerequisite",
+            joinColumns = @JoinColumn(name = "course_id"),
+            inverseJoinColumns = @JoinColumn(name = "prerequisite_course_id"),
+            uniqueConstraints = @UniqueConstraint(
+                    name = "uk_course_prerequisite",
+                    columnNames = {"course_id", "prerequisite_course_id"}))
+    private Set<Course> prerequisites = new LinkedHashSet<>();
+
     protected Course() {
     }
 
@@ -86,6 +106,17 @@ public class Course {
     public void addSchedule(CourseSchedule slot) {
         slot.attachTo(this);
         schedule.add(slot);
+    }
+
+    /**
+     * Adds a prerequisite edge. A course cannot require itself; longer cycles are a data-quality
+     * concern of the (out-of-scope) course administration path, not of registration.
+     */
+    public void addPrerequisite(Course prerequisite) {
+        if (prerequisite == this) {
+            throw new IllegalArgumentException("A course cannot be its own prerequisite.");
+        }
+        prerequisites.add(prerequisite);
     }
 
     public UUID getId() {
@@ -134,5 +165,9 @@ public class Course {
 
     public List<CourseSchedule> getSchedule() {
         return schedule;
+    }
+
+    public Set<Course> getPrerequisites() {
+        return prerequisites;
     }
 }
