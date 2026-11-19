@@ -1,7 +1,7 @@
 # 00 — System Overview & Contract Reference
 
-**Project:** Monash Course Registration System — Phase 1 (FR1–FR7) + Phase 2 FR8 + FR10
-**Status:** Phase 1 baseline v1.0; Phase 2 FR8 added in v1.1; Phase 2 FR10 added in v1.2
+**Project:** Monash Course Registration System — Phase 1 (FR1–FR7) + Phase 2 FR8/FR9/FR10
+**Status:** Phase 1 baseline v1.0; Phase 2 FR8 added in v1.1; FR9 added in v1.2; FR10 added in v1.3
 **Source of truth:** [`../../ORCHESTRATION.md`](../../ORCHESTRATION.md). Where this document and
 ORCHESTRATION.md disagree, ORCHESTRATION.md wins and this document is defective.
 **Audience:** coder-backend, coder-frontend, tester, reviewer.
@@ -12,11 +12,13 @@ ORCHESTRATION.md disagree, ORCHESTRATION.md wins and this document is defective.
 
 Phase 1 delivers a single, coherent student-facing workflow: **log in → browse the semester
 catalogue → register → review your timetable → drop**. Phase 2 adds **FR8 prerequisite validation**
-(registration also verifies that the student's completed-course history contains every prerequisite
-of the requested course) and **FR10 maximum credit-hour validation** (a configured per-semester
-credit limit, with the remaining credits shown to the student). The product must look and feel like a
-serious university product ("fancy university"), and it must be *correct under concurrency* — the
-seat counter is the one place where a plausible-looking implementation is routinely wrong.
+(registration verifies that the student's completed-course history contains every prerequisite of the
+requested course), **FR9 timetable clash detection** (registration rejects a course whose weekly slots
+overlap a course the student already holds) and **FR10 maximum credit-hour validation** (a configured
+per-semester credit limit, with the remaining credits shown to the student). The product must look and
+feel like a serious university product ("fancy university"), and it must be *correct under
+concurrency* — the seat counter is the one place where a plausible-looking implementation is
+routinely wrong.
 
 The system is a teaching-scale, single-semester, single-university application. It is not a
 general student administration system.
@@ -27,7 +29,7 @@ general student administration system.
 
 | ID | Persona | Goals | Phase 1 |
 | --- | --- | --- | --- |
-| P1 | **Student** (Aisha, Daniel, Priya) | Find courses, secure a seat before they fill, keep the timetable clash-free-by-eye, drop something they regret | Primary actor, full UI |
+| P1 | **Student** (Aisha, Daniel, Priya) | Find courses, secure a seat before they fill, keep a clash-free timetable, drop something they regret | Primary actor, full UI |
 | P2 | **Course administrator** | Create courses, open/close the window, raise capacity | **Out of scope** — data is seeded |
 | P3 | **Registrar / support officer** | Investigate "why did my registration fail?" | Read-only via `AuditLog` rows (no UI) |
 | P4 | **Developer / tester / reviewer** | Build, verify, audit | Consumes this spec set |
@@ -42,8 +44,9 @@ general student administration system.
   FR4 drop, FR5 registered-course view + CSV + print, FR6 capacity validation (incl. concurrency),
   FR7 registration-period control.
 - **Phase 2:** FR8 prerequisite validation before registration, with missing prerequisites shown to
-  the student and a prerequisite section on the course detail page; **FR10 maximum credit-hour
-  validation** with a configurable semester limit and remaining-credit warnings.
+  the student and a prerequisite section on the course detail page; FR9 timetable clash detection,
+  blocking overlapping registrations and naming every conflicting course and time; **FR10 maximum
+  credit-hour validation** with a configurable semester limit and remaining-credit warnings.
 - NFR1 performance, NFR2 security, NFR3 availability, NFR4 audit logging, NFR5 usability.
 - Responsive desktop + mobile web, keyboard accessible, WCAG 2.1 AA contrast.
 - Seeded demo data (3 students, 16 active-semester courses, 3 prior-semester courses, a prerequisite
@@ -54,7 +57,7 @@ general student administration system.
 | # | Non-goal | Rationale |
 | --- | --- | --- |
 | NG1 | Admin/CRUD UI for courses, students, periods | No admin persona in Phase 1 |
-| NG2 | Timetable **clash detection** | Requires a scheduling engine; Phase 2. The UI shows times, it does not validate overlaps |
+| NG2 | Travel-time buffers, exam timetables and automatic timetable optimisation | FR9 detects direct weekly-slot overlaps only; it is not a timetabling engine |
 | NG3 | Corequisites, program rules, prerequisite **administration UI** | FR8 covers prerequisites only; the prerequisite graph and completion history are seeded. Corequisites and program rules remain out of scope |
 | NG4 | Waitlists, seat offers, approvals | Contract defines hard 409 `COURSE_FULL` only |
 | NG5 | Payments, fees, invoices | Out of domain |
@@ -133,16 +136,17 @@ sequenceDiagram
     S->>DB: 2. course exists in active semester? else 404 COURSE_NOT_FOUND
     S->>DB: 3. already registered? else 409 ALREADY_REGISTERED
     S->>DB: 4. all prerequisites completed? else 409 PREREQUISITE_NOT_MET
-    S->>DB: 5. sum credits + new > configured max? else 409 CREDIT_LIMIT_EXCEEDED
-    S->>DB: 6. SELECT course FOR UPDATE
-    S->>S: 7. seats > 0? else 409 COURSE_FULL
-    S->>DB: 8. availableSeats-1, INSERT registration
-    S->>DB: 9. INSERT audit REGISTER / SUCCESS
+    S->>DB: 5. any registered slot overlap? else 409 TIMETABLE_CLASH
+    S->>DB: 6. sum credits + new > configured max? else 409 CREDIT_LIMIT_EXCEEDED
+    S->>DB: 7. SELECT course FOR UPDATE
+    S->>S: 8. seats > 0? else 409 COURSE_FULL
+    S->>DB: 9. availableSeats-1, INSERT registration
+    S->>DB: 10. INSERT audit REGISTER / SUCCESS
     S-->>C: result
     C-->>UI: 201 {registrationId, message, course, availableSeats}
 ```
 
-The order of steps 1–7 is **normative** (see §9.3, A-03, A-21).
+The order of steps 1–8 is **normative** (see §9.3, A-03, A-21, A-22, A-23).
 
 ---
 
@@ -156,7 +160,7 @@ The order of steps 1–7 is **normative** (see §9.3, A-03, A-21).
 | `security` | `JwtService` (issue/parse), `JwtAuthenticationFilter`, `StudentPrincipal` | touch JPA entities directly |
 | `domain` | `Student`, `Course`, `CourseSchedule`, `Registration`, `AuditLog`, enums `DayOfWeekCode`, `AuditAction`, `AuditOutcome` | contain HTTP types |
 | `repository` | Spring Data interfaces, `@Lock(PESSIMISTIC_WRITE)` finder for register | contain business rules |
-| `service` | `AuthService`, `CatalogService`, `RegistrationService`, `RegistrationPeriodService`, `AuditService`, `CsvExportService` | build HTTP responses |
+| `service` | `AuthService`, `CatalogService`, `RegistrationService`, `RegistrationPeriodService`, `AuditService`, `CsvExportService`, `TimetableClashDetector` | build HTTP responses |
 | `api` | `AuthController`, `CatalogController`, `RegistrationController`, `GlobalExceptionHandler`, `dto/*` | contain persistence logic |
 | `seed` | `DataSeeder` (`CommandLineRunner`) | run in `test` profile *silently inconsistent* with §8 |
 
@@ -379,7 +383,7 @@ require itself; longer cycles are a catalogue-data concern (A-21).
 seeded registration owned by `32067890` (Daniel Tan) — see A-16. It is full because a seat is taken,
 not because a count was fabricated; **C1 holds for every seeded course**, including this one.
 `FIT1045` must have **2** schedule slots (multi-slot test); every other course 1 slot.
-`FIT2099`, `FIT3077` intentionally overlap in time (documents that clashes are *not* detected — NG2).
+`FIT2099`, `FIT3077` intentionally overlap in time; they are the FR9 demo clash pairs (§8.6).
 
 ### 8.3 Prior semester `2026-S1` — 3 courses (must never appear in `2026-S2` results)
 
@@ -418,6 +422,21 @@ Consequences: Aisha may register `FIT2004`/`FIT2099`/`MTH1030` but not `FIT3077`
 demo "missing prerequisite" student. No other seed row changes: 3 students, 19 courses and exactly
 1 seeded registration remain (A-16). The prerequisite courses are the prior-semester rows
 (`FIT1008`, `FIT1047`, `MTH1020`), and their ids are referenced by the completion rows.
+
+### 8.6 FR9 demo overlaps (no seed change)
+
+The §8.2 schedule already contains overlapping pairs, so FR9 needs no new rows:
+
+| Existing course | Slot | Overlaps |
+| --- | --- | --- |
+| `FIT2004` | TUE 10:00–12:00 | `FIT1051` TUE 09:00–11:00 |
+| `FIT2099` | WED 10:00–12:00 | `FIT3077` WED 10:00–12:00 |
+| `FIT3143` | FRI 09:00–11:00 | `MTH1010` FRI 10:00–12:00 |
+
+With Aisha's seeded completion history, registering `FIT2004` then `FIT1051` demonstrates a
+rejection naming both courses; registering `FIT2004` then `ENG1001` (TUE 14:00–16:00) demonstrates
+success. No seeded pair meets exactly at a boundary; the half-open rule (touching times are allowed)
+is covered by T-FR9-03.
 
 ---
 
@@ -458,6 +477,7 @@ Timestamps: see §9.6. Auth: `Authorization: Bearer <jwt>`.
 | 409 | `ALREADY_REGISTERED` | unique `(student, course)` already exists | `POST /registrations` |
 | 409 | `CREDIT_LIMIT_EXCEEDED` | `totalCredits + course.creditHours > maxCredits`, where `maxCredits` is `app.registration.max-credits` (default `24`, FR10) | `POST /registrations` |
 | 409 | `PREREQUISITE_NOT_MET` | one or more prerequisites are absent from the student's completion history; `message` names every missing course code, sorted ASC | `POST /registrations` |
+| 409 | `TIMETABLE_CLASH` | the requested course's weekly slots overlap a course the student already holds in the active semester; `message` names every conflicting course and its overlapping day/time | `POST /registrations` |
 | 500 | `INTERNAL_ERROR` | unexpected server fault (never leaks detail) | all |
 
 `UNAUTHORIZED` and `INTERNAL_ERROR` are **elaborations** consistent with the frozen envelope; the
@@ -484,7 +504,8 @@ remain distinguishable in the audit trail (A-19).
 | E10 | GET | `/api/registrations/export` | bearer | 200 `text/csv` | 401 |
 
 **Validation precedence** for E8 (normative): auth → body → period → course exists in the active
-semester (A-17) → duplicate → **prerequisite completion (FR8)** → credit limit → capacity. For E9:
+semester (A-17) → duplicate → **prerequisite completion (FR8)** → **timetable clash (FR9)** →
+credit limit → capacity. For E9:
 auth → registration exists → ownership → period.
 
 ### 9.4 Payloads
@@ -698,7 +719,7 @@ Period config values (`app.registration.period-*`) are wall-clock in the univers
 | --- | --- | --- | --- |
 | A-01 | "one course at capacity 0 seeded as full" | **Superseded by A-16**: the seeded full course is `capacity = 1` with exactly one registration held by another student, so `availableSeats = 0` and C1 holds. Capacity `0` remains legal at schema level (A-18) but is not used by the seed | §8.2, [11](./11-decisions.md) |
 | A-02 | Enum lacks a rejected-drop action | Failed drops are `action=DROP, outcome=FAILURE`; failed registrations are `action=REGISTER_REJECTED, outcome=FAILURE`. No new enum values | NFR4 |
-| A-03 | Order of 409 checks in E8 | period → exists → duplicate → credit limit → capacity (capacity last, inside the lock). **Phase 2 (A-21) inserts prerequisites between duplicate and credit limit; A-22 makes the credit threshold configured** | §9.3 |
+| A-03 | Order of 409 checks in E8 | period → exists → duplicate → prerequisites → timetable clash → credit limit → capacity (capacity last, inside the lock). **Phase 2 A-21 inserts prerequisites, A-22 inserts the clash check, and A-23 makes the credit threshold configured** | §9.3 |
 | A-04 | Wrong password vs unknown user | Same 401 `INVALID_CREDENTIALS`; dummy BCrypt compare to equalise timing | FR1 |
 | A-05 | Unknown `semester` query value | 400 `VALIDATION_ERROR` (not empty list) — surfaces client bugs | FR2 |
 | A-06 | Empty catalogue/registrations | `200 []` / `200` with empty items; never 404 | FR2, FR5 |
@@ -713,9 +734,10 @@ Period config values (`app.registration.period-*`) are wall-clock in the univers
 
 **The series continues at A-16 in [11 — Decision Log](./11-decisions.md)** (A-15 is unassigned; see the
 note there). A-16…A-19 cover the seed-as-full-course shape, the non-active-semester registration path,
-the normative schema constraints, and validation-rejected audit rows; A-20 is deferred and A-21
-records the Phase 2 prerequisite model and check order; **A-22** records the FR10 configured credit
-limit. Decisions in 11 supersede the text they name.
+the normative schema constraints, and validation-rejected audit rows; A-20 is deferred, A-21
+records the Phase 2 prerequisite model and check order, A-22 records the timetable clash model and
+check order, and **A-23** records the FR10 configured credit limit. Decisions in 11 supersede the text
+they name.
 
 ---
 
@@ -749,7 +771,8 @@ limit. Decisions in 11 supersede the text they name.
 | RK7 | Design drift between two frontend passes | Medium | Medium | §[09](./09-ui-design-system.md) is prescriptive (tokens, sizes, states) |
 | RK8 | Token theft via XSS | Low | High | No `dangerouslySetInnerHTML`; no remote scripts; short 120-min expiry |
 | RK9 | BCrypt cost 10 slows login under load | Low | Low | Acceptable at demo scale; documented |
-| RK10 | Scope creep into clash detection / waitlists / corequisites | High | Medium | NG2, NG4, NG3 stated as non-goals; FR8 stays prerequisite-only |
+| RK10 | Scope creep into waitlists, corequisites or full scheduling-engine rules | High | Medium | NG2/NG3/NG4 state the non-goals; FR9 stays a pairwise weekly-slot overlap check |
+| RK11 | Two concurrent overlapping registrations by one student both pass the clash check | Low | Medium | Pessimistic lock on the student row serialises that student's register attempts (A-22) |
 
 ---
 
@@ -765,11 +788,12 @@ limit. Decisions in 11 supersede the text they name.
 | FR6 Capacity Validation | [06-fr6-capacity.md](./06-fr6-capacity.md) | backend (critical) |
 | FR7 Registration Period | [07-fr7-registration-period.md](./07-fr7-registration-period.md) | backend + frontend |
 | **FR8 Prerequisite Validation (Phase 2)** | [12-fr8-prerequisites.md](./12-fr8-prerequisites.md) | backend + frontend |
-| **FR10 Maximum Credit-Hour Validation (Phase 2)** | [13-fr10-max-credit-hours.md](./13-fr10-max-credit-hours.md) | backend + frontend |
+| **FR9 Timetable Clash Detection (Phase 2)** | [13-fr9-timetable-clash.md](./13-fr9-timetable-clash.md) | backend + frontend |
+| **FR10 Maximum Credit-Hour Validation (Phase 2)** | [14-fr10-max-credit-hours.md](./14-fr10-max-credit-hours.md) | backend + frontend |
 | NFR1–NFR5 | [08-non-functional.md](./08-non-functional.md) | all |
 | UI design system | [09-ui-design-system.md](./09-ui-design-system.md) | frontend |
 | Test strategy | [10-test-strategy.md](./10-test-strategy.md) | tester |
-| Decisions A-16…A-21 | [11-decisions.md](./11-decisions.md) | planner |
+| Decisions A-16…A-23 | [11-decisions.md](./11-decisions.md) | planner |
 
 **User stories** (referenced by every FR file):
 

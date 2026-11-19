@@ -87,6 +87,10 @@ export default function RegisterDialog({
           // The server names every missing course in the message (FR8).
           setError(apiError.message)
           break
+        case 'TIMETABLE_CLASH':
+          // FR9: the server names every conflicting course and its overlapping time.
+          setError(apiError.message)
+          break
         case 'ALREADY_REGISTERED':
           void refresh()
           pushToast({ variant: 'info', title: "You're already registered in this course." })

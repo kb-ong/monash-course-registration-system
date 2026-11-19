@@ -56,7 +56,7 @@ registration that would go over the limit is rejected before it is written.
 | B2 | Registration is allowed when `totalCredits + course.creditHours <= maxCredits`. Landing exactly on the limit is allowed. |
 | B3 | When the addition would exceed the limit, the server returns **409 `CREDIT_LIMIT_EXCEEDED`**, creates no registration row, and changes no seat count. |
 | B4 | The 409 message names the configured limit **and** the credits remaining before the attempt, e.g. `Adding FIT3179 (6 credit points) would exceed the 18 credit point limit. You have 3 credit points remaining.` The message is student-facing but not contractual; clients branch on the code. |
-| B5 | Check order is unchanged (A-03, A-21, A-22): auth → body → period → course exists in the active semester → duplicate → prerequisites → **credit limit** → capacity. |
+| B5 | Check order is unchanged (A-03, A-21, A-22, A-23): auth → body → period → course exists in the active semester → duplicate → prerequisites → **timetable clash** → **credit limit** → capacity. |
 | B6 | A rejection writes exactly one audit row `REGISTER_REJECTED / FAILURE / CREDIT_LIMIT_EXCEEDED` with the resolved course code (NFR4 E-05). |
 | B7 | `GET /api/registrations` returns `totalCredits`, the configured `maxCredits` and `remainingCredits`. The triple is always internally consistent: `remainingCredits = max(0, maxCredits − totalCredits)`. |
 | B8 | Dropping a registration reduces `totalCredits` by that course's `creditHours` and increases `remainingCredits` on the next read. |
@@ -258,4 +258,4 @@ the displayed limit and remaining credits come from the registrations response a
 
 ---
 
-*Prev: [12 FR8](./12-fr8-prerequisites.md) · Back to [00 — Overview](./00-overview.md)*
+*Prev: [13 FR9](./13-fr9-timetable-clash.md) · Back to [00 — Overview](./00-overview.md)*

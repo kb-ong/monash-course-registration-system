@@ -9,6 +9,7 @@ import edu.monash.registration.domain.Registration;
 import edu.monash.registration.domain.Student;
 import edu.monash.registration.support.BaseIntegrationTest;
 import edu.monash.registration.support.MutableClock;
+import edu.monash.registration.support.TestFixtures;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -40,11 +41,18 @@ class RegistrationControllerTest extends BaseIntegrationTest {
     void seed() {
         aisha = fixtures.aisha();
         daniel = fixtures.daniel();
-        fit1045 = fixtures.singleSlotCourse("FIT1045", 6, 120, 120);
-        fit2004 = fixtures.singleSlotCourse("FIT2004", 6, 80, 80);
-        tst0001 = fixtures.singleSlotCourse("TST0001", 6, 50, 50);
-        tst0002 = fixtures.singleSlotCourse("TST0002", 6, 50, 50);
-        tst0003 = fixtures.singleSlotCourse("TST0003", 3, 50, 50);
+        // FR9 now blocks overlapping timetables, so the multi-course credit tests below need
+        // courses that do not share a day/time.
+        fit1045 = fixtures.course("FIT1045", 6, 120, 120,
+                TestFixtures.Slot.of("MON", "09:00", "11:00", "Clayton, Building 25, Rm 125"));
+        fit2004 = fixtures.course("FIT2004", 6, 80, 80,
+                TestFixtures.Slot.of("TUE", "09:00", "11:00", "Clayton, Building 25, Rm 126"));
+        tst0001 = fixtures.course("TST0001", 6, 50, 50,
+                TestFixtures.Slot.of("WED", "09:00", "11:00", "Clayton, Building 25, Rm 127"));
+        tst0002 = fixtures.course("TST0002", 6, 50, 50,
+                TestFixtures.Slot.of("THU", "09:00", "11:00", "Clayton, Building 25, Rm 128"));
+        tst0003 = fixtures.course("TST0003", 3, 50, 50,
+                TestFixtures.Slot.of("FRI", "09:00", "11:00", "Clayton, Building 25, Rm 129"));
         fit3143 = fixtures.singleSlotCourse("FIT3143", 6, 1, 1);
     }
 

@@ -5,6 +5,7 @@ import edu.monash.registration.domain.AuditAction;
 import edu.monash.registration.domain.Course;
 import edu.monash.registration.domain.Student;
 import edu.monash.registration.support.BaseIntegrationTest;
+import edu.monash.registration.support.TestFixtures;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -32,11 +33,18 @@ class MaxCreditConfigTest extends BaseIntegrationTest {
     @BeforeEach
     void seed() {
         aisha = fixtures.aisha();
-        fit1045 = fixtures.singleSlotCourse("FIT1045", 6, 120, 120);
-        fit2004 = fixtures.singleSlotCourse("FIT2004", 6, 80, 80);
-        tst0002 = fixtures.singleSlotCourse("TST0002", 3, 50, 50);
-        tst0003 = fixtures.singleSlotCourse("TST0003", 3, 50, 50);
-        tst0004 = fixtures.singleSlotCourse("TST0004", 6, 50, 50);
+        // FR9: keep the fixture courses on distinct days so the credit-limit tests are not rejected
+        // by the earlier timetable-clash check.
+        fit1045 = fixtures.course("FIT1045", 6, 120, 120,
+                TestFixtures.Slot.of("MON", "09:00", "11:00", "Clayton, B25, Rm 101"));
+        fit2004 = fixtures.course("FIT2004", 6, 80, 80,
+                TestFixtures.Slot.of("TUE", "09:00", "11:00", "Clayton, B25, Rm 102"));
+        tst0002 = fixtures.course("TST0002", 3, 50, 50,
+                TestFixtures.Slot.of("WED", "09:00", "11:00", "Clayton, B25, Rm 103"));
+        tst0003 = fixtures.course("TST0003", 3, 50, 50,
+                TestFixtures.Slot.of("THU", "09:00", "11:00", "Clayton, B25, Rm 104"));
+        tst0004 = fixtures.course("TST0004", 6, 50, 50,
+                TestFixtures.Slot.of("FRI", "09:00", "11:00", "Clayton, B25, Rm 105"));
     }
 
     @Test

@@ -1,8 +1,8 @@
 # Orchestration & Frozen Contracts
 
-Phase 1 build of the Monash Course Registration System, plus Phase 2 FR8 prerequisite validation and
-FR10 configured semester credit-limit validation. This file is the single source of truth for agent
-boundaries, branches, and the API contract.
+Phase 1 build of the Monash Course Registration System, plus Phase 2 FR8 prerequisite validation,
+FR9 timetable clash detection and FR10 configured semester credit-limit validation. This file is the
+single source of truth for agent boundaries, branches, and the API contract.
 Do not change frozen decisions without the orchestrator's explicit approval.
 
 ## Roles & ownership
@@ -52,6 +52,8 @@ If a tester/reviewer finds a defect, they report it; the owning coder fixes it.
 - `AuditLog`: id, studentId, courseCode, action (`REGISTER`/`DROP`/`REGISTER_REJECTED`), outcome,
   detail, createdAt. Written for every register/drop attempt (NFR4).
 - No admin UI in Phase 1.
+- Schedule clash detection is a pairwise weekly-slot overlap check (same day, intersecting times);
+  travel buffers, exam timetables and automatic timetable optimisation remain out of scope.
 
 ## Frozen API contract
 
@@ -85,11 +87,14 @@ with the correct HTTP status. Validation errors: 400 `VALIDATION_ERROR`.
   - 409 `ALREADY_REGISTERED` when duplicate
   - 409 `PREREQUISITE_NOT_MET` when the student's completed-course history lacks any prerequisite;
     `message` names every missing code, sorted ASC (FR8)
+  - 409 `TIMETABLE_CLASH` when the course's weekly slots overlap a course the student already
+    holds in the active semester; `message` names every conflicting course and its overlapping
+    day/time (FR9)
   - 409 `CREDIT_LIMIT_EXCEEDED` when totalCredits + course.creditHours > maxCredits (configured,
     default 24, FR10); the message names the limit and remaining credits
   - 404 `COURSE_NOT_FOUND`
   - Check order (normative): auth -> body -> period -> course in active semester -> duplicate ->
-    prerequisites -> credit limit -> capacity.
+    prerequisites -> timetable clash -> credit limit -> capacity.
 - `DELETE /api/registrations/{registrationId}` (auth) -> 200 `{message, availableSeats}`
   - 403 `REGISTRATION_CLOSED`, 403 `NOT_OWNER`, 404 `REGISTRATION_NOT_FOUND`
 - `GET /api/registrations/export` (auth) -> `text/csv` attachment `course-list.csv`

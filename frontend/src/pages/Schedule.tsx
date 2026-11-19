@@ -457,8 +457,9 @@ export default function Schedule() {
                             className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning-700"
                             aria-hidden="true"
                           />
-                          Overlapping classes are shown side by side. Clashes are not blocked in
-                          Phase 1.
+                          Overlapping classes are shown side by side. Registration blocks new
+                          clashes, so an overlap here means the timetable changed after it was
+                          booked.
                         </p>
                       ) : null}
                       {hasClamped ? (

@@ -197,8 +197,9 @@ success or failure — written even when the business transaction rolls back. Re
 | E-12 | Register, request rejected by validation — missing/blank/non-UUID `courseId`, unparseable body (A-19) | `REGISTER_REJECTED` | `FAILURE` | `VALIDATION_ERROR` | 400 |
 | E-13 | Drop, request rejected by validation — `registrationId` path value not a UUID (A-19) | `DROP` | `FAILURE` | `VALIDATION_ERROR` | 404 |
 | E-14 | Register, one or more prerequisites not completed (FR8, A-21) | `REGISTER_REJECTED` | `FAILURE` | `PREREQUISITE_NOT_MET` | 409 |
+| E-15 | Register, requested course overlaps an existing registration (FR9, A-22) | `REGISTER_REJECTED` | `FAILURE` | `TIMETABLE_CLASH` | 409 |
 
-**Completeness rule.** E-01…E-14 is the **entire** audit vocabulary. Every register and drop request
+**Completeness rule.** E-01…E-15 is the **entire** audit vocabulary. Every register and drop request
 that reaches an authenticated handler produces exactly one row from this table, and no other row shape
 is permitted. In particular:
 
@@ -231,6 +232,7 @@ Out of scope for `audit_log` (application log only): login success/failure (A-10
 | T-NFR4-09 | audit | prior-semester course `FIT1008` (2026-S1) | `POST /api/registrations` with its id | 404 `COURSE_NOT_FOUND`; exactly 1 row `REGISTER_REJECTED/FAILURE/SEMESTER_NOT_ACTIVE`; `course_code=FIT1008`; seats unchanged (A-17) |
 | T-NFR4-10 | audit | authenticated student | `POST /api/registrations` with `courseId="not-a-uuid"`, then `DELETE /api/registrations/not-a-uuid` | 400 `VALIDATION_ERROR` for the register, 404 `REGISTRATION_NOT_FOUND` for the drop; exactly 2 rows — E-12 (`REGISTER_REJECTED`) and E-13 (`DROP`), both `detail=VALIDATION_ERROR`, `course_code` null (A-19) |
 | T-NFR4-11 | audit | student missing a prerequisite | `POST /api/registrations` for the dependent course | exactly 1 row E-14, `course_code` = dependent course; no registration row; seat count unchanged |
+| T-NFR4-12 | audit | student already holds an overlapping course | `POST /api/registrations` for the conflicting course | exactly 1 row E-15, `course_code` = requested course; no registration row; seat count unchanged |
 
 ---
 

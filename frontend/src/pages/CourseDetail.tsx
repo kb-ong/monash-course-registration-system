@@ -243,7 +243,8 @@ export default function CourseDetail() {
                 </>
               )}
               <p className="mt-3 max-w-[68ch] text-body-sm text-ink-500">
-                Timetable clashes are not detected — check the class times above.
+                Timetable clashes are checked when you register. A course that overlaps a class
+                you already hold is blocked, and the conflicting classes are named.
               </p>
             </section>
           </div>
