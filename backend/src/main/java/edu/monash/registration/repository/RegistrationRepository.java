@@ -33,6 +33,20 @@ public interface RegistrationRepository extends JpaRepository<Registration, UUID
     List<Registration> findAllForStudentInSemester(@Param("studentId") UUID studentId,
             @Param("semester") String semester);
 
+    /**
+     * FR9: the student's active-semester registrations with their weekly slots fetched in the same
+     * query, so clash detection never lazily loads a schedule per course. {@code distinct} collapses
+     * the one-row-per-slot duplication a collection fetch join would otherwise produce.
+     */
+    @Query("""
+            select distinct r from Registration r
+            join fetch r.course c
+            left join fetch c.schedule
+            where r.student.id = :studentId and c.semester = :semester
+            """)
+    List<Registration> findAllForStudentInSemesterWithSchedule(
+            @Param("studentId") UUID studentId, @Param("semester") String semester);
+
     @Query("""
             select r from Registration r
             join fetch r.student s

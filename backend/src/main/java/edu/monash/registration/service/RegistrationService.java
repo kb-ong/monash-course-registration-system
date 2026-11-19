@@ -17,6 +17,7 @@ import edu.monash.registration.error.NotOwnerException;
 import edu.monash.registration.error.PrerequisiteNotMetException;
 import edu.monash.registration.error.RegistrationClosedException;
 import edu.monash.registration.error.RegistrationNotFoundException;
+import edu.monash.registration.error.TimetableClashException;
 import edu.monash.registration.error.UnauthorizedException;
 import edu.monash.registration.repository.CourseRepository;
 import edu.monash.registration.repository.RegistrationRepository;
@@ -42,8 +43,8 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>Seat arithmetic happens only while holding a {@code SELECT ... FOR UPDATE} lock on the course
  * row, inside the same transaction that inserts or deletes the registration. Check order is
- * normative: period → course exists → duplicate → prerequisites → credit limit → capacity (A-03,
- * A-21) for register, and registration exists → owner → period for drop.
+ * normative: period → course exists → duplicate → prerequisites → timetable clash → credit limit →
+ * capacity (A-03, A-21, A-22) for register, and registration exists → owner → period for drop.
  */
 @Service
 public class RegistrationService {
@@ -97,7 +98,7 @@ public class RegistrationService {
             throw new CourseNotFoundException();
         }
 
-        Student student = studentRepository.findByStudentId(studentId)
+        Student student = studentRepository.findWithLockByStudentId(studentId)
                 .orElseThrow(UnauthorizedException::new);
 
         if (registrationRepository.existsByStudentIdAndCourseId(student.getId(), course.getId())) {
@@ -119,6 +120,18 @@ public class RegistrationService {
             auditFailure(studentId, course.getCode(), AuditAction.REGISTER_REJECTED,
                     "PREREQUISITE_NOT_MET");
             throw new PrerequisiteNotMetException(course.getCode(), missingPrerequisites);
+        }
+
+        // FR9: compare the requested course's weekly slots with every course this student holds in
+        // the active semester. Existing registrations are read under the student lock above.
+        List<TimetableClashDetector.Clash> clashes = TimetableClashDetector.detect(course,
+                registrationRepository.findAllForStudentInSemesterWithSchedule(student.getId(),
+                        period.semester()));
+        if (!clashes.isEmpty()) {
+            auditFailure(studentId, course.getCode(), AuditAction.REGISTER_REJECTED,
+                    "TIMETABLE_CLASH");
+            throw new TimetableClashException(course.getCode(),
+                    TimetableClashDetector.describe(clashes));
         }
 
         int currentCredits = currentCredits(student.getId());
