@@ -3,9 +3,12 @@ package edu.monash.registration;
 import edu.monash.registration.config.JwtProperties;
 import edu.monash.registration.domain.Course;
 import edu.monash.registration.domain.Registration;
+import edu.monash.registration.domain.WaitlistEntry;
 import edu.monash.registration.repository.CourseRepository;
+import edu.monash.registration.repository.NotificationRepository;
 import edu.monash.registration.repository.RegistrationRepository;
 import edu.monash.registration.repository.StudentRepository;
+import edu.monash.registration.repository.WaitlistRepository;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
@@ -50,6 +53,12 @@ class RegressionDefaultProfileTest {
 
     @Autowired
     private StudentRepository studentRepository;
+
+    @Autowired
+    private WaitlistRepository waitlistRepository;
+
+    @Autowired
+    private NotificationRepository notificationRepository;
 
     @Test
     @DisplayName("T-M1-01 /h2-console/ is not permitted on the default profile and no JWT secret is committed")
@@ -147,6 +156,26 @@ class RegressionDefaultProfileTest {
         assertThat(registrationRepository.count()).isEqualTo(1);
         assertThat(studentRepository.count()).isEqualTo(3);
         assertThat(courseRepository.count()).isEqualTo(19);
+    }
+
+    @Test
+    @DisplayName("T-FR11-12 shipped seed queues Aisha then Priya for the full FIT3182 with notifications")
+    void tFr11_12_seededWaitlist() {
+        Course fit3182 = courseByCode(
+                courseRepository.findBySemesterOrderByCodeAsc("2026-S2"), "FIT3182");
+        List<WaitlistEntry> queue = waitlistRepository.findQueueForCourse(fit3182.getId());
+
+        assertThat(queue).hasSize(2);
+        assertThat(queue.stream().map(entry -> entry.getStudent().getStudentId()).toList())
+                .containsExactly("32012345", "32011111");
+        assertThat(queue.get(0).getCourse().getCode()).isEqualTo("FIT3182");
+        assertThat(queue.get(0).getJoinedAt()).isBefore(queue.get(1).getJoinedAt());
+        assertThat(notificationRepository.count())
+                .as("one join notification per seeded queue place")
+                .isEqualTo(2);
+        assertThat(notificationRepository.countByStudentIdAndReadAtIsNull(
+                studentRepository.findByStudentId("32012345").orElseThrow().getId()))
+                .isEqualTo(1);
     }
 
     private List<String> codes(Course course) {

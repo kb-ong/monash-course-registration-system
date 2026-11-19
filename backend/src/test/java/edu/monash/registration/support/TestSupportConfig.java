@@ -3,8 +3,10 @@ package edu.monash.registration.support;
 import edu.monash.registration.config.JwtProperties;
 import edu.monash.registration.repository.AuditLogRepository;
 import edu.monash.registration.repository.CourseRepository;
+import edu.monash.registration.repository.NotificationRepository;
 import edu.monash.registration.repository.RegistrationRepository;
 import edu.monash.registration.repository.StudentRepository;
+import edu.monash.registration.repository.WaitlistRepository;
 import java.time.Clock;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
@@ -30,9 +32,11 @@ public class TestSupportConfig {
     @Bean
     public TestFixtures testFixtures(StudentRepository studentRepository,
             CourseRepository courseRepository, RegistrationRepository registrationRepository,
-            AuditLogRepository auditLogRepository, JdbcTemplate jdbcTemplate,
+            AuditLogRepository auditLogRepository, WaitlistRepository waitlistRepository,
+            NotificationRepository notificationRepository, JdbcTemplate jdbcTemplate,
             PasswordEncoder passwordEncoder, JwtProperties jwtProperties) {
         return new TestFixtures(studentRepository, courseRepository, registrationRepository,
-                auditLogRepository, jdbcTemplate, passwordEncoder, jwtProperties);
+                auditLogRepository, waitlistRepository, notificationRepository, jdbcTemplate,
+                passwordEncoder, jwtProperties);
     }
 }

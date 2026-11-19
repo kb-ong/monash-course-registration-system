@@ -17,7 +17,10 @@ interface CourseCardProps {
   totalCredits: number
   /** The semester registrations are accepted for; other terms are blocked. */
   activeSemester?: string
+  /** FR11: the student's queue position when already waiting for this course. */
+  waitlistPosition?: number
   onRegister: (course: Course) => void
+  onJoinWaitlist: (course: Course) => void
 }
 
 export default function CourseCard({
@@ -27,7 +30,9 @@ export default function CourseCard({
   periodOpen,
   totalCredits,
   activeSemester,
+  waitlistPosition,
   onRegister,
+  onJoinWaitlist,
 }: CourseCardProps) {
   const reduceMotion = useReducedMotion()
   const full = course.availableSeats <= 0
@@ -39,8 +44,14 @@ export default function CourseCard({
     periodOpen,
     totalCredits,
     activeSemester,
+    waitlistPosition,
   })
   const semesterBlocked = action.kind === 'semester'
+  const waitlisted = waitlistPosition !== undefined
+  const primaryAction = () => {
+    if (action.kind === 'waitlist') onJoinWaitlist(course)
+    else onRegister(course)
+  }
 
   return (
     <motion.article
@@ -67,7 +78,11 @@ export default function CourseCard({
         </div>
         <div className="flex shrink-0 flex-wrap justify-end gap-1.5">
           {full ? (
-            <Badge variant="full">Full</Badge>
+            waitlisted ? (
+              <Badge variant="waitlist">Waitlist #{waitlistPosition}</Badge>
+            ) : (
+              <Badge variant="full">Full</Badge>
+            )
           ) : (
             <Badge variant="credit" showIcon={false}>
               {creditBadge(course.creditHours)}
@@ -121,9 +136,9 @@ export default function CourseCard({
           </Link>
         ) : (
           <Button
-            variant="primary"
+            variant={action.kind === 'waitlist' ? 'gold' : 'primary'}
             size="md"
-            onClick={() => onRegister(course)}
+            onClick={primaryAction}
             disabled={action.disabled}
             title={action.reason}
             aria-label={action.reason ? `${action.label} — ${action.reason}` : action.label}

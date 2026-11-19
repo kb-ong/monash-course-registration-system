@@ -4,6 +4,7 @@ import { normalizeApiError } from '../api/client'
 import { creditPoints, scheduleLine } from '../lib/format'
 import { useRegistrations } from '../registration/RegistrationsContext'
 import { useRegistrationPeriod } from '../registration/RegistrationPeriodContext'
+import { useWaitlist } from '../registration/WaitlistContext'
 import type { Course } from '../types/api'
 import Button from './ui/Button'
 import Modal from './ui/Modal'
@@ -24,6 +25,7 @@ export default function RegisterDialog({
 }: RegisterDialogProps) {
   const { data, register, refresh } = useRegistrations()
   const { refresh: refreshPeriod } = useRegistrationPeriod()
+  const { refresh: refreshWaitlist } = useWaitlist()
   const { pushToast } = useToast()
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -48,6 +50,8 @@ export default function RegisterDialog({
     setError(null)
     try {
       const result = await register(course.id)
+      // FR11: a successful registration clears any queue place for this course.
+      void refreshWaitlist()
       pushToast({
         variant: 'success',
         title: `Registered for ${course.code}`,
@@ -80,6 +84,7 @@ export default function RegisterDialog({
           break
         case 'ALREADY_REGISTERED':
           void refresh()
+          void refreshWaitlist()
           pushToast({ variant: 'info', title: "You're already registered in this course." })
           onSettled?.()
           onClose()

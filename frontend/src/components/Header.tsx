@@ -1,10 +1,12 @@
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
-import { LogOut, Menu, X } from 'lucide-react'
+import { Bell, Check, LogOut, Menu, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 import { cn } from '../lib/cn'
-import { initials } from '../lib/format'
+import { formatDateTime, initials } from '../lib/format'
+import { useNotifications } from '../registration/NotificationsContext'
+import type { NotificationItem } from '../types/api'
 
 const NAV_ITEMS = [
   { to: '/catalog', label: 'Catalogue' },
@@ -14,11 +16,16 @@ const NAV_ITEMS = [
 export default function Header() {
   const { student, logout } = useAuth()
   const location = useLocation()
+  const navigate = useNavigate()
   const reduceMotion = useReducedMotion()
+  const { data: notifications, unreadCount, loading: notificationsLoading, refresh, markRead } =
+    useNotifications()
   const [scrolled, setScrolled] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
+  const notificationsRef = useRef<HTMLDivElement>(null)
   const mobileButtonRef = useRef<HTMLButtonElement>(null)
   const mobileCloseRef = useRef<HTMLButtonElement>(null)
   const mobilePanelRef = useRef<HTMLDivElement>(null)
@@ -39,8 +46,40 @@ export default function Header() {
 
   useEffect(() => {
     setMenuOpen(false)
+    setNotificationsOpen(false)
     setMobileOpen(false)
   }, [location.pathname])
+
+  useEffect(() => {
+    if (!notificationsOpen) return
+    void refresh()
+    const onPointerDown = (event: MouseEvent) => {
+      if (notificationsRef.current && !notificationsRef.current.contains(event.target as Node)) {
+        setNotificationsOpen(false)
+      }
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setNotificationsOpen(false)
+    }
+    document.addEventListener('mousedown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [notificationsOpen, refresh])
+
+  const handleOpenNotification = async (notification: NotificationItem) => {
+    setNotificationsOpen(false)
+    if (!notification.read) {
+      try {
+        await markRead(notification.id)
+      } catch {
+        // The inbox will be reconciled by the next poll; navigation is still useful.
+      }
+    }
+    navigate(`/courses/${notification.courseId}`)
+  }
 
   useEffect(() => {
     if (!menuOpen) return
@@ -158,6 +197,116 @@ export default function Header() {
         </nav>
 
         <div className="flex items-center gap-1 sm:gap-2">
+          <div className="relative" ref={notificationsRef}>
+            <button
+              type="button"
+              onClick={() => setNotificationsOpen((open) => !open)}
+              className={cn(
+                'relative flex h-10 w-10 items-center justify-center rounded-md transition-colors duration-1',
+                iconButtonColour,
+              )}
+              aria-label={
+                unreadCount > 0
+                  ? `Notifications, ${unreadCount} unread`
+                  : 'Notifications'
+              }
+              aria-haspopup="true"
+              aria-expanded={notificationsOpen}
+            >
+              <Bell className="h-[18px] w-[18px]" aria-hidden="true" />
+              {unreadCount > 0 ? (
+                <span
+                  className="absolute right-0.5 top-0.5 flex h-[17px] min-w-[17px] items-center justify-center rounded-full bg-monash-gold px-1 text-[10px] font-bold text-ink-900"
+                  aria-hidden="true"
+                >
+                  {unreadCount > 9 ? '9+' : unreadCount}
+                </span>
+              ) : null}
+            </button>
+
+            <AnimatePresence>
+              {notificationsOpen ? (
+                <motion.div
+                  initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -4 }}
+                  transition={{ duration: reduceMotion ? 0 : 0.12 }}
+                  className="fixed left-4 right-4 top-16 z-50 overflow-hidden rounded-lg border border-line-200 bg-surface text-ink-900 shadow-e3 sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-2 sm:w-[340px] sm:max-w-[calc(100vw-2rem)]"
+                  role="dialog"
+                  aria-label="Notifications"
+                >
+                  <div className="flex items-center justify-between gap-3 border-b border-line-200 px-4 py-3">
+                    <p className="text-body font-semibold">Notifications</p>
+                    <span className="text-body-sm text-ink-400">
+                      {unreadCount > 0 ? `${unreadCount} unread` : 'All read'}
+                    </span>
+                  </div>
+                  {notificationsLoading && !notifications ? (
+                    <p className="px-4 py-6 text-center text-body-sm text-ink-500">Loading…</p>
+                  ) : !notifications || notifications.items.length === 0 ? (
+                    <div className="px-4 py-8 text-center">
+                      <Bell className="mx-auto h-5 w-5 text-ink-300" aria-hidden="true" />
+                      <p className="mt-2 text-body-sm text-ink-500">No notifications yet.</p>
+                      <p className="mt-1 text-body-sm text-ink-400">
+                        Waitlist updates will appear here.
+                      </p>
+                    </div>
+                  ) : (
+                    <ul className="max-h-[360px] divide-y divide-line-200 overflow-y-auto">
+                      {notifications.items.map((notification) => (
+                        <li key={notification.id}>
+                          <button
+                            type="button"
+                            onClick={() => void handleOpenNotification(notification)}
+                            className={cn(
+                              'flex w-full items-start gap-3 px-4 py-3 text-left transition-colors duration-1 hover:bg-monash-mist',
+                              !notification.read && 'bg-blue-50/50',
+                            )}
+                          >
+                            <span
+                              className={cn(
+                                'mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full',
+                                notification.type === 'WAITLIST_PROMOTED'
+                                  ? 'bg-success-50 text-success-600'
+                                  : 'bg-warning-50 text-warning-700',
+                              )}
+                              aria-hidden="true"
+                            >
+                              {notification.type === 'WAITLIST_PROMOTED' ? (
+                                <Check className="h-3.5 w-3.5" />
+                              ) : (
+                                <Bell className="h-3.5 w-3.5" />
+                              )}
+                            </span>
+                            <span className="min-w-0 flex-1">
+                              <span className="flex items-start justify-between gap-2">
+                                <span className="text-overline uppercase tracking-[0.08em] text-blue-600">
+                                  {notification.courseCode}
+                                </span>
+                                {!notification.read ? (
+                                  <span
+                                    className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-blue-600"
+                                    aria-label="Unread"
+                                  />
+                                ) : null}
+                              </span>
+                              <span className="mt-0.5 block text-body-sm text-ink-700">
+                                {notification.message}
+                              </span>
+                              <span className="mt-1 block text-body-sm text-ink-400">
+                                {formatDateTime(notification.createdAt)}
+                              </span>
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </motion.div>
+              ) : null}
+            </AnimatePresence>
+          </div>
+
           <div className="relative hidden lg:block" ref={menuRef}>
             <button
               type="button"

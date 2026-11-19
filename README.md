@@ -1,9 +1,11 @@
-# Monash Course Registration System — Phase 1 + Phase 2 FR8
+# Monash Course Registration System — Phase 1 + Phase 2 FR8 + FR11
 
 A course registration experience for Monash University students: browse the semester catalog,
 register and drop courses inside the registration window, and manage a personal timetable.
-Phase 2 adds prerequisite validation: a course can only be registered when the student's completion
-history contains every prerequisite, and the missing courses are named when it does not.
+Phase 2 adds prerequisite validation (a course can only be registered when the student's completion
+history contains every prerequisite, and the missing courses are named when it does not) and
+**waitlist management** (join a full course's FIFO queue, see your live position, get enrolled
+automatically when a seat opens, and receive in-app notifications).
 
 - **Frontend:** React 18 + TypeScript + Vite + Tailwind CSS (academic, "fancy university" styling)
 - **Backend:** Java 21 / Spring Boot 3.3 (Spring Web, Data JPA, Security, JWT), H2 in-memory
@@ -48,8 +50,13 @@ cd frontend && npm run build
 Phase 1: FR1 login · FR2 view/search courses · FR3 register · FR4 drop · FR5 view registered courses ·
 FR6 capacity validation · FR7 registration period control.
 
-Phase 2: FR8 prerequisite validation (spec: [`docs/specs/12-fr8-prerequisites.md`](docs/specs/12-fr8-prerequisites.md)).
+Phase 2: FR8 prerequisite validation (spec: [`docs/specs/12-fr8-prerequisites.md`](docs/specs/12-fr8-prerequisites.md))
+and FR11 waitlist management (spec: [`docs/specs/13-fr11-waitlist.md`](docs/specs/13-fr11-waitlist.md)).
 
 Demo prerequisite history: Aisha (`32012345`) has completed `FIT1008` and `MTH1020`; Daniel
 (`32067890`) has completed `FIT1008` and `FIT1047`; Priya (`32011111`) has completed none of these courses.
 `FIT2004` requires `FIT1008`, `FIT3077` requires both `FIT1008` and `FIT1047`.
+
+Demo waitlist: `FIT3182` is full and starts with Aisha at position 1 and Priya at position 2.
+Sign in as Daniel and drop `FIT3182` — Aisha is enrolled automatically and receives a promotion
+notification, and Priya moves to position 1. The notification bell is in the application header.

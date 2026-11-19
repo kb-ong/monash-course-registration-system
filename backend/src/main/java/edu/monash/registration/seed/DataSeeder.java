@@ -3,8 +3,11 @@ package edu.monash.registration.seed;
 import edu.monash.registration.domain.Course;
 import edu.monash.registration.domain.CourseSchedule;
 import edu.monash.registration.domain.DayOfWeekCode;
+import edu.monash.registration.domain.Notification;
+import edu.monash.registration.domain.NotificationType;
 import edu.monash.registration.domain.Registration;
 import edu.monash.registration.domain.Student;
+import edu.monash.registration.domain.WaitlistEntry;
 import jakarta.persistence.EntityManager;
 import java.time.Clock;
 import java.time.Instant;
@@ -153,9 +156,10 @@ public class DataSeeder implements CommandLineRunner {
         int courses = seedCourses();
         seedPrerequisitesAndCompletions();
         seedFullCourseRegistration();
+        seedWaitlistDemo();
         entityManager.flush();
-        log.info("seed.completed students=3 courses={} registrations=1 prerequisiteEdges=5 completions=4",
-                courses);
+        log.info("seed.completed students=3 courses={} registrations=1 prerequisiteEdges=5 "
+                + "completions=4 waitlistEntries=2 notifications=2", courses);
     }
 
     private void seedStudents() {
@@ -243,6 +247,34 @@ public class DataSeeder implements CommandLineRunner {
                 .getSingleResult();
         entityManager.persist(new Registration(daniel, fullCourse,
                 Instant.now(clock).truncatedTo(ChronoUnit.SECONDS)));
+    }
+
+    /**
+     * FR11 demo queue: FIT3182 is full (Daniel holds its only seat), so Aisha is #1 and Priya is #2
+     * from startup. Both are eligible: the course has no prerequisites and neither student carries
+     * credits yet. Dropping Daniel's FIT3182 registration automatically enrols Aisha and moves
+     * Priya to #1, which is the demo of the whole feature.
+     */
+    private void seedWaitlistDemo() {
+        Student aisha = studentByStudentId("32012345");
+        Student priya = studentByStudentId("32011111");
+        Course fit3182 = entityManager
+                .createQuery("select c from Course c where c.code = :code and c.semester = :semester",
+                        Course.class)
+                .setParameter("code", "FIT3182")
+                .setParameter("semester", SEMESTER_S2)
+                .getSingleResult();
+
+        Instant joinedAisha = Instant.now(clock).truncatedTo(ChronoUnit.SECONDS).minusSeconds(7200);
+        Instant joinedPriya = joinedAisha.plusSeconds(3600);
+
+        entityManager.persist(new WaitlistEntry(aisha, fit3182, joinedAisha));
+        entityManager.persist(new WaitlistEntry(priya, fit3182, joinedPriya));
+
+        entityManager.persist(new Notification(aisha, fit3182, NotificationType.WAITLIST_JOINED,
+                "You are #1 on the waitlist for FIT3182 Big Data Management.", joinedAisha));
+        entityManager.persist(new Notification(priya, fit3182, NotificationType.WAITLIST_JOINED,
+                "You are #2 on the waitlist for FIT3182 Big Data Management.", joinedPriya));
     }
 
     private void persistCourse(UUID id, String semester, CourseSeed seed) {

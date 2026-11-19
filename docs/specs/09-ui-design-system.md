@@ -342,6 +342,7 @@ Height 22, pad-x 8, radius pill, `overline` 11/16, gap 6, optional 12 px icon.
 | `open` | `success-50` | `success-600` | `Dot` |
 | `closing` | `warning-50` | `warning-700` | `Clock` |
 | `full` | `danger-50` | `danger-600` | `Ban` |
+| `waitlist` | `warning-50` | `warning-700` | `Clock` |
 | `faculty` | white + `strong` border | `ink-700` | — |
 
 ### 5.6 StatusBanner (registration period)
@@ -418,7 +419,12 @@ Centred, max-width 420, padding 48/24. Title `h4`, body `body` `ink-500`, one pr
   (`body-sm` `ink-500`).
 - Centre/right (≥1024): `Catalogue`, `My schedule` — `body` 500; active = `ink-900` + 2 px gold underline
   offset 22 px.
-- Right: avatar 32 px circle (`navy` bg, white initials 12 px 600), name (hidden < `lg`), `LogOut` icon
+- Right: notification bell (FR11) with an unread count pill (gold, white `ink-900` text, `9+` cap);
+  clicking opens a 340 px white panel, 200 ms fade/slide, listing notifications newest first with an
+  icon, course code, message, timestamp and a 6 px unread dot; clicking an item marks it read and
+  navigates to the course. Empty state "No notifications yet. Waitlist updates will appear here."
+  `aria-label="Notifications, N unread"`; Escape and click-outside close it.
+- Then avatar 32 px circle (`navy` bg, white initials 12 px 600), name (hidden < `lg`), `LogOut` icon
   button with `aria-label="Sign out"`.
 - Mobile: `Menu` icon → slide-over from right (280 px, navy, white links, 200 ms).
 
@@ -542,7 +548,9 @@ States: **loading** — hero renders immediately (no skeleton), credit ring show
 skeletons; **error** — hero + banner render, `NEXT CLASSES` panel shows inline "Couldn't load your
 schedule. [Retry]"; **empty (0 registrations)** — hero copy "You're not registered in anything yet.",
 CTA `Browse catalogue`, next-classes panel replaced by EmptyState; **closed** — banner variant + both
-CTAs remain (browsing is always allowed).
+CTAs remain (browsing is always allowed). FR11 adds a **Waitlist** section (hidden when empty) between
+"Your courses" and "Featured": one card per queued course with code, name, `#N` badge, position/join
+date and `Leave waitlist`; "Term at a glance" shows a **Waitlisted courses** count.
 
 ### 6.3 Course Catalog / Search (`/catalog`)
 
@@ -588,13 +596,21 @@ LOADING (refine)                      └─────────────
 grid at opacity .6, aria-busy=true, previous results kept
                                       ERROR
                                       ┌──────────────────────────────┐
-FULL COURSE CARD                      │ ⚠ We couldn't load courses.  │
+FULL COURSE CARD — WAITLIST          │ ⚠ We couldn't load courses.  │
 ┌──────────────────────────────┐      │   [ Retry ]                  │
 │ FIT3182            [ FULL ]  │      └──────────────────────────────┘
 │ Big Data Management          │
 │ SEATS ░░░░░░░░░░ 0 of 1      │      CLOSED WINDOW
-│ [  Full  ]      Details →    │      banner: ▌ Registration closed 20 Dec
+│ [ Join waitlist ] Details →  │      banner: ▌ Registration closed 20 Dec
 └──────────────────────────────┘      cards keep [ Register ] disabled
+
+QUEUED COURSE CARD
+┌──────────────────────────────┐
+│ FIT3182     [ WAITLIST #1 ]  │
+│ Big Data Management          │
+│ SEATS ░░░░░░░░░░ 0 of 1      │
+│ [ On waitlist · #1 ] Details │
+└──────────────────────────────┘
 ```
 
 ### 6.4 Course Detail (`/courses/:id`)
@@ -627,8 +643,10 @@ FULL COURSE CARD                      │ ⚠ We couldn't load courses.  │
 
 States: loading (title skeleton + panel skeleton), 404 (`404 / We couldn't find that course. [Back to
 catalogue]`), registered (panel shows `Registered` badge + `View in schedule` + `Drop` ghost danger),
-full (`Full` disabled + "Join the catalogue next semester" note — no waitlist), closed (disabled with
-reason), error (panel-level retry).
+full (FR11: gold `Join waitlist` + "This course is full. Join the waitlist and we'll enroll you
+automatically when a seat opens."), queued (panel shows `Waitlist #N`, the position sentence and a
+secondary `Leave waitlist` button), closed (disabled with reason), credit cap (disabled with reason),
+error (panel-level retry).
 
 ### 6.5 My Schedule (`/schedule`)
 

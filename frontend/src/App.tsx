@@ -9,13 +9,19 @@ import Dashboard from './pages/Dashboard'
 import Login from './pages/Login'
 import NotFound from './pages/NotFound'
 import Schedule from './pages/Schedule'
+import { NotificationsProvider } from './registration/NotificationsContext'
 import { RegistrationPeriodProvider } from './registration/RegistrationPeriodContext'
 import { RegistrationsProvider } from './registration/RegistrationsContext'
+import { WaitlistProvider } from './registration/WaitlistContext'
 
 function ProtectedLayout() {
   return (
     <RegistrationsProvider>
-      <AppShell />
+      <WaitlistProvider>
+        <NotificationsProvider>
+          <AppShell />
+        </NotificationsProvider>
+      </WaitlistProvider>
     </RegistrationsProvider>
   )
 }

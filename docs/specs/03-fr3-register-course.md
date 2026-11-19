@@ -2,7 +2,9 @@
 
 **Story:** US2, US4 · **Actors:** Student (P1), System
 **Endpoints:** `POST /api/registrations`
-**Depends on:** [FR1](./01-fr1-student-login.md), [FR2](./02-fr2-view-courses.md), [FR6](./06-fr6-capacity.md), [FR7](./07-fr7-registration-period.md), [FR8](./12-fr8-prerequisites.md).
+**Depends on:** [FR1](./01-fr1-student-login.md), [FR2](./02-fr2-view-courses.md),
+[FR6](./06-fr6-capacity.md), [FR7](./07-fr7-registration-period.md),
+[FR8](./12-fr8-prerequisites.md), [FR11](./13-fr11-waitlist.md).
 
 ---
 
@@ -26,7 +28,7 @@
 | B5 | Unknown course → 404 `COURSE_NOT_FOUND`. |
 | B6 | Already registered (same student + course) → 409 `ALREADY_REGISTERED`. Idempotent retries must not create a second row. |
 | B7 | `totalCredits + course.creditHours > 24` → 409 `CREDIT_LIMIT_EXCEEDED`. Landing exactly on 24 is allowed. |
-| B8 | `availableSeats = 0` → 409 `COURSE_FULL`, no record created, seat count unchanged. |
+| B8 | `availableSeats = 0` → 409 `COURSE_FULL`, no record created, seat count unchanged. The E8 contract is unchanged; the UI then offers the separate FR11 **Join waitlist** action (`POST /api/waitlist`), which is a new request with its own checks, never a retry. |
 | B9 | Success → 201 with `registrationId`, `message`, the full `course` object (seats already decremented) and `availableSeats`. |
 | B10 | Seat decrement and registration insert happen in **one transaction** under a pessimistic write lock on the course row (see FR6). |
 | B11 | The response is not cacheable; `Cache-Control: no-store`. |
@@ -35,6 +37,7 @@
 | B14 | Every attempt (success or failure) writes exactly one audit row (NFR4). |
 | B15 | Prerequisites (FR8): the student's completion history must contain every prerequisite course of the requested course. A missed prerequisite is 409 `PREREQUISITE_NOT_MET` with no registration row and no seat change. The message names every missing prerequisite code, sorted ASC. |
 | B16 | A course payload carries `prerequisites: [{id, code, name}]`, ordered `code` ASC, and `[]` when none. The series of checks in B3 puts prerequisites before credit and capacity, so an ineligible student learns about eligibility first. |
+| B17 | FR11: a successful registration deletes any waitlist entry the same student holds for the same course. Registering directly supersedes waiting; the queue place is never kept alongside a registration. |
 
 ---
 
@@ -155,20 +158,21 @@ States:
 | State | Trigger | Rendering |
 | --- | --- | --- |
 | Enabled | seats > 0, period open, not registered | primary button |
-| Disabled — full | `availableSeats = 0` | button disabled, label "Full", tooltip "No seats available" |
+| Full — waitlist available | `availableSeats = 0`, period open, under the credit cap, not queued | gold button **Join waitlist** (FR11), note "This course is full. Join the waitlist and we'll enroll you automatically when a seat opens." |
+| Queued | course present in `GET /api/waitlist` | badge "Waitlist #N", disabled button "On waitlist · #N"; detail page offers Leave waitlist |
 | Disabled — closed | `period.open = false` | button disabled, label "Registration closed" |
 | Disabled — already | course present in `/api/registrations` | label "Registered ✓" (lucide `Check`), not clickable |
 | Pending | request in flight | button spinner, dialog buttons disabled, `aria-busy` |
 | Success | 201 | dialog closes, toast "Registered for FIT2004" + seat meter animates down, card badge becomes "Registered" |
-| Error — full | 409 `COURSE_FULL` | dialog closes, toast (danger) "FIT3143 just filled up. No seat was taken." + card refreshes to FULL |
+| Error — full | 409 `COURSE_FULL` | dialog closes, toast (danger) "FIT3143 just filled up. No seat was taken." + card refreshes to FULL and offers Join waitlist (FR11) |
 | Error — credit | 409 `CREDIT_LIMIT_EXCEEDED` | dialog stays open, inline danger alert "That would take you to 30 credits. Your limit is 24." |
 | Error — prerequisite | 409 `PREREQUISITE_NOT_MET` | dialog stays open, inline danger alert with the server message naming every missing prerequisite; no toast claims success |
 | Error — closed | 403 `REGISTRATION_CLOSED` | dialog closes, page-wide banner switches to "Registration closed", toast info |
 | Error — duplicate | 409 `ALREADY_REGISTERED` | dialog closes, toast info "You're already registered in this course." card marked registered |
 | Error — network | no response | dialog stays open, inline "Couldn't reach the server. Try again." with Retry |
 
-After any success the SPA invalidates and refetches `GET /api/registrations` and the visible course list
-so seat counts and the credit meter are consistent.
+After any success the SPA invalidates and refetches `GET /api/registrations`, `GET /api/waitlist` and
+the visible course list so seat counts, queue state and the credit meter are consistent.
 
 ---
 

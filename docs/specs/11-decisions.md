@@ -25,6 +25,8 @@ that document is defective and this file wins.
 | **A-19** | Are attempts rejected by request validation audited? | **Yes.** A malformed, missing or type-invalid attempt that fails validation writes one audit row with `detail = VALIDATION_ERROR`, at the HTTP status the contract gives that failure. `POST /api/registrations` → **400 `VALIDATION_ERROR`** with `REGISTER_REJECTED / FAILURE` (e.g. `courseId` absent, not a string, or not a UUID). `DELETE /api/registrations/{registrationId}` with a non-UUID path value → **404 `REGISTRATION_NOT_FOUND`** with `DROP / FAILURE`: path ids are opaque, so a malformed id is reported exactly like an unknown id (FR4 §3, `00 §9.2`), while the audit row still records `detail = VALIDATION_ERROR` so the two cases remain distinguishable in the trail. `course_code` is `null` when the course cannot be resolved from the request (`00 §7.6` already permits this). Validation rejected **before** the student is known (i.e. `401 UNAUTHORIZED` on a missing/invalid token) is **not** audited — there is no authenticated subject and `audit_log.student_id` is `NOT NULL`; authentication failures belong to the application log (A-10). | `08 NFR4.1`, `08 NFR4.2` E-12/E-13 |
 | **A-21** | Phase 2 FR8: what is a prerequisite, what does "completed" mean, and where does the check sit? | Prerequisites are a self-referencing many-to-many edge on `course` (`course_prerequisite`), and completion is a separate `student_completed_course` history keyed by course **id**. A current-semester `registration` never counts as completion. Registration requires every prerequisite id in the history, otherwise **409 `PREREQUISITE_NOT_MET`** with every missing code sorted in `message`; the check is inserted between duplicate and credit limit (see the subsection below). Course payloads carry `prerequisites: [{id,code,name}]`, ordered `code` ASC. The graph and history are seeded; there is no administration UI (NG3). | `12-fr8-prerequisites.md`, `00 §7.7–7.8`, `00 §8.5`, `00 §9.2`, `08 NFR4.2` E-14 |
 
+| **A-22** | Phase 2 FR11: what is a waitlist, how is it ordered, when is a seat granted, and what does "notification" mean? | One FIFO queue per full course (`waitlist_entry`, unique per student/course, ordered by entry id; position derived). Joining requires an open window and a **full** active-semester course, and applies the FR8/FR3 academic checks (duplicate then waitlist duplicate → prerequisites → credit limit → seats available). A drop adds the seat back and promotes the first **eligible** queued student in the same transaction and under the same course lock (FR6); ineligible entries are skipped and stay queued. A successful direct registration clears the student's queue row. Notifications are persisted **in-app** rows (join confirmation, automatic promotion) with a header inbox; there is no email/SMS. Waitlist joins/leaves and promotions are audited (NFR4 E-15…E-19). | `13-fr11-waitlist.md`, `00 §7.9–7.10`, `00 §8.6`, `00 §9.2`, `08 NFR4.2` E-15…E-19 |
+
 ### A-21 — Phase 2 FR8 prerequisite model and check order
 
 **Model.** `course_prerequisite (course_id, prerequisite_course_id)` records "course_id requires
@@ -54,6 +56,50 @@ requested course code (NFR4 E-14).
 Daniel `FIT1008`/`FIT1047`, Priya none; `FIT2004`/`FIT2099` require `FIT1008`, `FIT3077` requires
 both, and `MTH1030` requires `MTH1020`. No other seed invariant changes.
 
+### A-22 — Phase 2 FR11 waitlist model, promotion and notifications
+
+**Model.** `waitlist_entry (id BIGINT identity, student_id, course_id, joined_at)` with
+`uk_waitlist_student_course`. The identity `id` is the FIFO order because every queue mutation runs
+while holding the course row lock (FR6), so joins are serialised. Position is **derived**
+(`1 + count(entries with a lower id)`), never stored, so a leave or promotion re-ranks the queue
+immediately with no renumbering job. `notification` rows carry `student_id`, `course_id`, `type`
+(`WAITLIST_JOINED` / `WAITLIST_PROMOTED`), `message`, `created_at` and nullable `read_at`.
+
+**Join.** Check order is normative: auth → body → period → course in the active semester → already
+registered → already waitlisted → prerequisites → credit limit → seats available. A course that is
+not full is rejected with **409 `SEAT_AVAILABLE`**; the queue is only for full courses. A student may
+queue for several courses and may not exceed the 24-credit cap when joining (the queue itself does
+not consume credits). Positions are returned by E12 and E11.
+
+**Promotion.** A drop deletes the registration, adds the seat back, then walks the queue in id order
+and enrols the first student who is still eligible (not duplicated, prerequisites met, credits within
+the cap). Promotion is **automatic** — there is no offer/acceptance window — and forms one transaction
+with the drop, under the same course row lock, so `availableSeats + registrations = capacity` still
+holds and the freed seat cannot be taken twice. Ineligible entries are skipped, not deleted: they may
+become eligible later. If nobody is eligible the seat stays available. A successful direct
+registration clears the student's own queue row for that course (`register` supersedes waiting).
+
+**Notifications.** In-app only (NG10): E14 lists the authenticated student's notifications newest
+first with an unread count, E15 marks one read idempotently; the header bell polls every 30 s so a
+promotion performed by another student becomes visible. No email, SMS or push transport exists.
+
+**Audit.** E-15 join success (`WAITLIST_JOIN`), E-16 join rejection (`WAITLIST_REJECTED` with detail
+code), E-17 leave success (`WAITLIST_LEAVE`), E-18 leave rejection (`WAITLIST_LEAVE/FAILURE`),
+E-19 promotion (`WAITLIST_PROMOTED/SUCCESS`, written for the promoted student alongside the
+dropper's E-07).
+
+**UI.** A full course offers **Join waitlist** (gold) while the window is open and the student is
+under the credit cap; the detail page shows the live position and a **Leave waitlist** action; the
+dashboard has a Waitlist section and the header a notification inbox. Every surface offering joining
+says that a queue place reserves neither a seat nor credits.
+
+**Seed.** `00 §8.6` queues Aisha (#1) then Priya (#2) for the full `FIT3182`, with two join
+notifications. Everything else in §8 is unchanged.
+
+**Supersedes.** NG4 in `00 §3.2` (waitlists are now in scope; seat offers/approvals are not), B12 in
+`06 §2` ("no waitlist"), the full-course UI copy in `03 §6`/`09 §6.4`, and the "no waitlist" note in
+the catalogue/course-detail copy.
+
 ---
 
 ## Supersession record
@@ -66,6 +112,9 @@ both, and `MTH1030` requires `MTH1020`. No other seed invariant changes.
 | Failed register on an unknown course always details `COURSE_NOT_FOUND` | `08 NFR4.2` E-03 (implicitly exhaustive) | A-17 (`SEMESTER_NOT_ACTIVE` for a non-active-semester course) |
 | Attempts failing validation are not mentioned in the matrix | `08 NFR4.2` (implicitly exhaustive) | A-19 (`VALIDATION_ERROR` rows E-12/E-13) |
 | No schema constraints recorded for `course_schedule` | `00 §7.4` (checks stated but not enumerated as a decision) | A-18 |
+| "Waitlists, seat offers, approvals" are non-goals | `00 §3.2` NG4 | A-22 (one FIFO waitlist; offers/approvals still out) |
+| "No queueing, no waitlist … a 409 `COURSE_FULL` is final" | `06 §2` B12 | A-22 (409 remains the E8 answer; the client may then join the queue) |
+| Full course renders "Full" with no path forward | `03 §6`, `09 §6.4`, catalogue UI copy | A-22 (Join waitlist while the window is open and the cap allows) |
 
 ---
 
