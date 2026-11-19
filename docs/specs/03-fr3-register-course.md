@@ -2,15 +2,16 @@
 
 **Story:** US2, US4 · **Actors:** Student (P1), System
 **Endpoints:** `POST /api/registrations`
-**Depends on:** [FR1](./01-fr1-student-login.md), [FR2](./02-fr2-view-courses.md), [FR6](./06-fr6-capacity.md), [FR7](./07-fr7-registration-period.md).
+**Depends on:** [FR1](./01-fr1-student-login.md), [FR2](./02-fr2-view-courses.md), [FR6](./06-fr6-capacity.md), [FR7](./07-fr7-registration-period.md), [FR8](./12-fr8-prerequisites.md).
 
 ---
 
 ## 1. Requirement
 
 > A signed-in student can register for a course in the active semester, once, while the registration
-> window is open, provided they stay within the 24-credit limit and a seat is available. On success,
-> exactly one seat is consumed and the student immediately sees the course in their registrations.
+> window is open, provided they have completed every prerequisite (FR8), stay within the 24-credit
+> limit and a seat is available. On success, exactly one seat is consumed and the student immediately
+> sees the course in their registrations.
 
 ---
 
@@ -20,7 +21,7 @@
 | --- | --- |
 | B1 | Request body is `{"courseId": "<uuid>"}`. `courseId` is required and must parse as a UUID. |
 | B2 | The student identity comes **only** from the JWT subject. Any `studentId` in the body is ignored (and must not be honoured). |
-| B3 | Checks run in this order (normative, A-03): auth → body → **period** → **course exists in the active semester** (A-17) → **duplicate** → **credit limit** → **capacity**. |
+| B3 | Checks run in this order (normative, A-03, A-21): auth → body → **period** → **course exists in the active semester** (A-17) → **duplicate** → **prerequisites** (FR8) → **credit limit** → **capacity**. |
 | B4 | Period closed → 403 `REGISTRATION_CLOSED`. No writes, no seat change. |
 | B5 | Unknown course → 404 `COURSE_NOT_FOUND`. |
 | B6 | Already registered (same student + course) → 409 `ALREADY_REGISTERED`. Idempotent retries must not create a second row. |
@@ -32,6 +33,8 @@
 | B12 | A `DataIntegrityViolationException` on the unique key is mapped to 409 `ALREADY_REGISTERED`, never 500. |
 | B13 | Double-submit from the UI must be prevented client-side (button disabled from click until response), but the server is still the authority. |
 | B14 | Every attempt (success or failure) writes exactly one audit row (NFR4). |
+| B15 | Prerequisites (FR8): the student's completion history must contain every prerequisite course of the requested course. A missed prerequisite is 409 `PREREQUISITE_NOT_MET` with no registration row and no seat change. The message names every missing prerequisite code, sorted ASC. |
+| B16 | A course payload carries `prerequisites: [{id, code, name}]`, ordered `code` ASC, and `[]` when none. The series of checks in B3 puts prerequisites before credit and capacity, so an ineligible student learns about eligibility first. |
 
 ---
 
@@ -45,6 +48,7 @@
 | period | `startAt ≤ serverTime ≤ endAt` | 403 `REGISTRATION_CLOSED` |
 | course | exists | 404 `COURSE_NOT_FOUND` |
 | uniqueness | no existing `(student, course)` | 409 `ALREADY_REGISTERED` |
+| prerequisites | every `course.prerequisites` id is in the student's `completedCourses` | 409 `PREREQUISITE_NOT_MET` |
 | credits | `sum + creditHours ≤ 24` | 409 `CREDIT_LIMIT_EXCEEDED` |
 | seats | `availableSeats ≥ 1` | 409 `COURSE_FULL` |
 
@@ -98,6 +102,10 @@ Failure examples:
 {"error":{"code":"CREDIT_LIMIT_EXCEEDED","message":"Adding FIT3077 (6 credit points) would exceed the 24 credit point limit.","timestamp":"2026-11-08T11:26:41+08:00"}}
 ```
 
+```json
+{"error":{"code":"PREREQUISITE_NOT_MET","message":"Cannot register for FIT3077: missing prerequisites FIT1008, FIT1047.","timestamp":"2026-11-08T11:26:41+08:00"}}
+```
+
 ---
 
 ## 5. Audit log events
@@ -108,6 +116,7 @@ Failure examples:
 | Closed period | `REGISTER_REJECTED` | `FAILURE` | `REGISTRATION_CLOSED` | B4 |
 | Unknown course | `REGISTER_REJECTED` | `FAILURE` | `COURSE_NOT_FOUND` | B5 |
 | Duplicate | `REGISTER_REJECTED` | `FAILURE` | `ALREADY_REGISTERED` | B6 |
+| Missing prerequisite | `REGISTER_REJECTED` | `FAILURE` | `PREREQUISITE_NOT_MET` | B15 |
 | Credit limit | `REGISTER_REJECTED` | `FAILURE` | `CREDIT_LIMIT_EXCEEDED` | B7 |
 | Full | `REGISTER_REJECTED` | `FAILURE` | `COURSE_FULL` | B8 |
 
@@ -153,6 +162,7 @@ States:
 | Success | 201 | dialog closes, toast "Registered for FIT2004" + seat meter animates down, card badge becomes "Registered" |
 | Error — full | 409 `COURSE_FULL` | dialog closes, toast (danger) "FIT3143 just filled up. No seat was taken." + card refreshes to FULL |
 | Error — credit | 409 `CREDIT_LIMIT_EXCEEDED` | dialog stays open, inline danger alert "That would take you to 30 credits. Your limit is 24." |
+| Error — prerequisite | 409 `PREREQUISITE_NOT_MET` | dialog stays open, inline danger alert with the server message naming every missing prerequisite; no toast claims success |
 | Error — closed | 403 `REGISTRATION_CLOSED` | dialog closes, page-wide banner switches to "Registration closed", toast info |
 | Error — duplicate | 409 `ALREADY_REGISTERED` | dialog closes, toast info "You're already registered in this course." card marked registered |
 | Error — network | no response | dialog stays open, inline "Couldn't reach the server. Try again." with Retry |
@@ -179,6 +189,8 @@ so seat counts and the credit meter are consistent.
 | T-FR3-11 | concurrency | `FIT3143` capacity 1, 5 students | 5 concurrent `POST`s | exactly one 201, four 409 `COURSE_FULL`; final `availableSeats=0`; exactly 1 registration row (see T-FR6-03) |
 | T-FR3-12 | security | Aisha's token, body includes `{"courseId": …, "studentId":"32067890"}` | `POST` | 201 attributed to `32012345`; Daniel has no registration (body field ignored) |
 | T-FR3-13 | edge | duplicate submit of the *same* request twice, sequentially | 2 × `POST` | first 201, second 409 `ALREADY_REGISTERED`; one row only |
+| T-FR3-14 | negative | student missing a prerequisite (FR8) | `POST` for that course | 409 `PREREQUISITE_NOT_MET`; no row; seats unchanged; audit detail `PREREQUISITE_NOT_MET` |
+| T-FR3-15 | ordering | full course whose prerequisites are unmet | `POST` | `PREREQUISITE_NOT_MET`, not `COURSE_FULL` (prerequisites precede capacity) |
 
 ---
 
@@ -200,6 +212,8 @@ is ignored and the token subject owns the registration.
 matching action/outcome/detail.
 **FR3-AC8** — Given a success, when the catalogue is refetched, then the new seat count matches the
 201 response.
+**FR3-AC9** — Given a course with prerequisites, when a student missing one registers, then 409
+`PREREQUISITE_NOT_MET` names every missing course and no row or seat change occurs (FR8).
 
 ---
 

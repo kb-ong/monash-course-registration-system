@@ -151,9 +151,11 @@ public class DataSeeder implements CommandLineRunner {
 
         seedStudents();
         int courses = seedCourses();
+        seedPrerequisitesAndCompletions();
         seedFullCourseRegistration();
         entityManager.flush();
-        log.info("seed.completed students=3 courses={} registrations=1", courses);
+        log.info("seed.completed students=3 courses={} registrations=1 prerequisiteEdges=5 completions=4",
+                courses);
     }
 
     private void seedStudents() {
@@ -184,6 +186,44 @@ public class DataSeeder implements CommandLineRunner {
             persistCourse(courseId('c', priorIndex), SEMESTER_S1, seed);
         }
         return ACTIVE_COURSES.size() + PRIOR_COURSES.size();
+    }
+
+    /**
+     * FR8 demo history (spec §8.5). Prerequisites point at prior-semester rows; completion history
+     * is separate from registration, so Aisha and Daniel can pass checks while Priya cannot.
+     */
+    private void seedPrerequisitesAndCompletions() {
+        Course fit1008 = courseByCode("FIT1008");
+        Course fit1047 = courseByCode("FIT1047");
+        Course mth1020 = courseByCode("MTH1020");
+
+        courseByCode("FIT2004").addPrerequisite(fit1008);
+        courseByCode("FIT2099").addPrerequisite(fit1008);
+        courseByCode("FIT3077").addPrerequisite(fit1008);
+        courseByCode("FIT3077").addPrerequisite(fit1047);
+        courseByCode("MTH1030").addPrerequisite(mth1020);
+
+        Student aisha = studentByStudentId("32012345");
+        aisha.markCompleted(fit1008);
+        aisha.markCompleted(mth1020);
+
+        Student daniel = studentByStudentId("32067890");
+        daniel.markCompleted(fit1008);
+        daniel.markCompleted(fit1047);
+    }
+
+    private Course courseByCode(String code) {
+        return entityManager
+                .createQuery("select c from Course c where c.code = :code", Course.class)
+                .setParameter("code", code)
+                .getSingleResult();
+    }
+
+    private Student studentByStudentId(String studentId) {
+        return entityManager
+                .createQuery("select s from Student s where s.studentId = :studentId", Student.class)
+                .setParameter("studentId", studentId)
+                .getSingleResult();
     }
 
     /**

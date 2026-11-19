@@ -1,6 +1,7 @@
 package edu.monash.registration.service;
 
 import edu.monash.registration.api.dto.CourseDto;
+import edu.monash.registration.api.dto.PrerequisiteDto;
 import edu.monash.registration.api.dto.ScheduleSlotDto;
 import edu.monash.registration.domain.Course;
 import edu.monash.registration.domain.CourseSchedule;
@@ -42,7 +43,14 @@ public class CourseDtoMapper {
                 course.getSemester(),
                 course.getFaculty(),
                 course.getDescription(),
-                slots);
+                slots,
+                course.getPrerequisites().stream()
+                        .sorted(Comparator.comparing(Course::getCode))
+                        .map(prerequisite -> new PrerequisiteDto(
+                                prerequisite.getId(),
+                                prerequisite.getCode(),
+                                prerequisite.getName()))
+                        .toList());
     }
 
     public List<CourseDto> toDtos(List<Course> courses) {

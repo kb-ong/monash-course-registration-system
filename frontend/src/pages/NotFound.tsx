@@ -44,7 +44,7 @@ export default function NotFound() {
       <footer className="on-navy border-t-2 border-monash-gold bg-monash-navy py-6">
         <div className="main-container flex flex-col gap-1 text-overline uppercase tracking-[0.08em] text-footer-faint sm:flex-row sm:items-center sm:justify-between">
           <span>© 2026 Monash University</span>
-          <span>Phase 1 demonstration build</span>
+          <span>Phase 1 + Phase 2 demonstration build</span>
         </div>
       </footer>
     </div>

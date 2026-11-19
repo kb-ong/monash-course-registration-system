@@ -32,7 +32,7 @@ export default function Footer() {
             {semester}
             {courseCount ? <span className="text-white/60"> · {courseCount}</span> : null}
           </p>
-          <p className="mt-2 text-body-sm text-footer-muted">Phase 1 · Open enrolment</p>
+          <p className="mt-2 text-body-sm text-footer-muted">Phase 2 · Prerequisites enforced</p>
         </div>
 
         <div className="md:justify-self-end">
@@ -66,7 +66,7 @@ export default function Footer() {
       <div className="border-t border-white/10">
         <div className="main-container flex flex-col gap-2 py-5 text-overline uppercase tracking-[0.08em] text-footer-faint sm:flex-row sm:items-center sm:justify-between">
           <span>© 2026 Monash University</span>
-          <span>Phase 1 demonstration build</span>
+          <span>Phase 1 + Phase 2 demonstration build</span>
         </div>
       </div>
     </footer>

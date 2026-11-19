@@ -1,6 +1,6 @@
 # Orchestration & Frozen Contracts
 
-Phase 1 build of the Monash Course Registration System.
+Phase 1 build of the Monash Course Registration System, plus Phase 2 FR8 prerequisite validation.
 This file is the single source of truth for agent boundaries, branches, and the API contract.
 Do not change frozen decisions without the orchestrator's explicit approval.
 
@@ -39,9 +39,11 @@ If a tester/reviewer finds a defect, they report it; the owning coder fixes it.
 
 ## Data model (MVP+)
 
-- `Student`: id (uuid), studentId (unique, e.g. `32012345`), name, email, program, passwordHash.
+- `Student`: id (uuid), studentId (unique, e.g. `32012345`), name, email, program, passwordHash,
+  completedCourses (join table `student_completed_course`: student_id, course_id).
 - `Course`: id (uuid), code (unique), name, creditHours, instructor, capacity, availableSeats,
-  semester (e.g. `2026-S2`), description, faculty, schedule (child table: day, startTime, endTime, location).
+  semester (e.g. `2026-S2`), description, faculty, schedule (child table: day, startTime, endTime,
+  location), prerequisites (self join table `course_prerequisite`: course_id, prerequisite_course_id).
 - `Registration`: id (uuid), student, course, registeredAt. Unique constraint `(student_id, course_id)`.
 - `AuditLog`: id, studentId, courseCode, action (`REGISTER`/`DROP`/`REGISTER_REJECTED`), outcome,
   detail, createdAt. Written for every register/drop attempt (NFR4).
@@ -61,7 +63,8 @@ with the correct HTTP status. Validation errors: 400 `VALIDATION_ERROR`.
 ### Catalog
 - `GET /api/semesters` -> `[{code,name,active}]`
 - `GET /api/courses?semester=2026-S2&q=<text>` (auth)
-  -> `[{id,code,name,creditHours,instructor,capacity,availableSeats,semester,faculty,description,schedule:[{day,startTime,endTime,location}]}]`
+  -> `[{id,code,name,creditHours,instructor,capacity,availableSeats,semester,faculty,description,schedule:[{day,startTime,endTime,location}],prerequisites:[{id,code,name}]}]`
+  - `prerequisites` is ordered `code` ASC and is `[]` when the course has none (FR8).
   - `q` matches code OR name, case-insensitive, trimmed; blank/absent = all.
   - Default semester = configured active semester; only that semester's courses.
 - `GET /api/courses/{id}` (auth) -> same object; 404 `COURSE_NOT_FOUND`.
@@ -74,8 +77,12 @@ with the correct HTTP status. Validation errors: 400 `VALIDATION_ERROR`.
   - 403 `REGISTRATION_CLOSED` when outside period
   - 409 `COURSE_FULL` when availableSeats = 0 (no record created, seat count unchanged)
   - 409 `ALREADY_REGISTERED` when duplicate
+  - 409 `PREREQUISITE_NOT_MET` when the student's completed-course history lacks any prerequisite;
+    `message` names every missing code, sorted ASC (FR8)
   - 409 `CREDIT_LIMIT_EXCEEDED` when totalCredits + course.creditHours > 24
   - 404 `COURSE_NOT_FOUND`
+  - Check order (normative): auth -> body -> period -> course in active semester -> duplicate ->
+    prerequisites -> credit limit -> capacity.
 - `DELETE /api/registrations/{registrationId}` (auth) -> 200 `{message, availableSeats}`
   - 403 `REGISTRATION_CLOSED`, 403 `NOT_OWNER`, 404 `REGISTRATION_NOT_FOUND`
 - `GET /api/registrations/export` (auth) -> `text/csv` attachment `course-list.csv`
@@ -95,6 +102,10 @@ exactly 10 successful registrations and `availableSeats = 0`.
 - 12–16 courses in `2026-S2` (varied faculties, credit 3/6, one course with capacity 1 for full-course
   tests, one course at capacity 0 seeded as full), plus a few in `2026-S1` that must NOT appear.
 - At least one course with >1 schedule slot.
+- FR8 prerequisite graph: `FIT2004`/`FIT2099` require `FIT1008`; `FIT3077` requires `FIT1008` and
+  `FIT1047`; `MTH1030` requires `MTH1020`. Completion history: `32012345` completed
+  `FIT1008` + `MTH1020`; `32067890` completed `FIT1008` + `FIT1047`; `32011111` none.
+  No Phase 1 capacity course (`FIT3143`, `FIT3182`, `FIT1045`) has a prerequisite.
 
 ## Branching & git
 

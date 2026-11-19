@@ -21,6 +21,7 @@ import java.util.Date;
 import java.util.List;
 import java.util.UUID;
 import javax.crypto.SecretKey;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 /**
@@ -38,6 +39,7 @@ public class TestFixtures {
     private final CourseRepository courseRepository;
     private final RegistrationRepository registrationRepository;
     private final AuditLogRepository auditLogRepository;
+    private final JdbcTemplate jdbcTemplate;
     private final PasswordEncoder passwordEncoder;
     private final JwtProperties jwtProperties;
     private final SecretKey signingKey;
@@ -45,11 +47,12 @@ public class TestFixtures {
 
     public TestFixtures(StudentRepository studentRepository, CourseRepository courseRepository,
             RegistrationRepository registrationRepository, AuditLogRepository auditLogRepository,
-            PasswordEncoder passwordEncoder, JwtProperties jwtProperties) {
+            JdbcTemplate jdbcTemplate, PasswordEncoder passwordEncoder, JwtProperties jwtProperties) {
         this.studentRepository = studentRepository;
         this.courseRepository = courseRepository;
         this.registrationRepository = registrationRepository;
         this.auditLogRepository = auditLogRepository;
+        this.jdbcTemplate = jdbcTemplate;
         this.passwordEncoder = passwordEncoder;
         this.jwtProperties = jwtProperties;
         this.signingKey = Keys.hmacShaKeyFor(
@@ -62,6 +65,9 @@ public class TestFixtures {
     public void clearAll() {
         auditLogRepository.deleteAll();
         registrationRepository.deleteAll();
+        // FR8 join tables hold FKs to both course and student; clear them before the entities.
+        jdbcTemplate.update("delete from course_prerequisite");
+        jdbcTemplate.update("delete from student_completed_course");
         courseRepository.deleteAll();
         studentRepository.deleteAll();
     }
@@ -130,6 +136,29 @@ public class TestFixtures {
                 .filter(c -> c.getCode().equals(code))
                 .findFirst()
                 .orElseThrow(() -> new AssertionError("No fixture course " + code));
+    }
+
+    /**
+     * FR8: attach prerequisites to a course. Writes the join rows directly so the fixture does not
+     * depend on an open persistence context (the test methods are not transactional).
+     */
+    public Course requires(Course course, Course... prerequisites) {
+        for (Course prerequisite : prerequisites) {
+            jdbcTemplate.update(
+                    "insert into course_prerequisite (course_id, prerequisite_course_id) values (?, ?)",
+                    course.getId(), prerequisite.getId());
+        }
+        return course;
+    }
+
+    /** FR8: record completed courses in a student's history. */
+    public Student completed(Student student, Course... courses) {
+        for (Course course : courses) {
+            jdbcTemplate.update(
+                    "insert into student_completed_course (student_id, course_id) values (?, ?)",
+                    student.getId(), course.getId());
+        }
+        return student;
     }
 
     /** Directly persist a registration (fixture convenience, no capacity checks). */
@@ -250,6 +279,17 @@ public class TestFixtures {
                 List.of(Slot.of("WED", "09:00", "11:00", "Clayton, Building 25, Rm 122")));
         course("MTH1020", "Analysis of Change", 6, "Dr James Wong", 60, 60, S1, "Science",
                 List.of(Slot.of("THU", "14:00", "16:00", "Clayton, Building 28, Rm 118")));
+
+        // FR8 baseline (spec §8.5): same prerequisite edges and completion history as DataSeeder.
+        Course fit1008 = courseByCode("FIT1008");
+        Course fit1047 = courseByCode("FIT1047");
+        Course mth1020 = courseByCode("MTH1020");
+        requires(courseByCode("FIT2004"), fit1008);
+        requires(courseByCode("FIT2099"), fit1008);
+        requires(courseByCode("FIT3077"), fit1008, fit1047);
+        requires(courseByCode("MTH1030"), mth1020);
+        completed(studentRepository.findByStudentId("32012345").orElseThrow(), fit1008, mth1020);
+        completed(studentRepository.findByStudentId("32067890").orElseThrow(), fit1008, fit1047);
     }
 
     public UUID randomUuid() {

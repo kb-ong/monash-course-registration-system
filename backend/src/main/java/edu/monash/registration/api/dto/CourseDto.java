@@ -15,5 +15,6 @@ public record CourseDto(
         String semester,
         String faculty,
         String description,
-        List<ScheduleSlotDto> schedule) {
+        List<ScheduleSlotDto> schedule,
+        List<PrerequisiteDto> prerequisites) {
 }
