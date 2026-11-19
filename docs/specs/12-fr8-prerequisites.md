@@ -162,7 +162,7 @@ E-14 in [08 NFR4.2](./08-non-functional.md).
 
 The "Assessment & prerequisites" section lists each prerequisite code and name, or says
 "No prerequisites. This unit is open to students in the active semester." when the array is empty.
-The section still states that timetable clashes are not detected (NG2).
+The section also states that timetable clashes are checked when registering (FR9).
 
 ### 6.2 Register dialog
 

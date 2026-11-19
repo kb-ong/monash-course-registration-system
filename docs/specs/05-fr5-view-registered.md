@@ -31,7 +31,7 @@
 | B11 | CSV has no BOM (so spreadsheet imports do not see a stray `\uFEFF` in the first header cell). |
 | B12 | Print: a dedicated print stylesheet renders a clean A4 timetable + course table; nav, buttons and toasts are hidden. |
 | B13 | The week grid places a slot by `day` column and `startTime`/`endTime` rows on a 30-minute grid from 08:00 to 20:00; slots outside that range are clamped and flagged with a `†` note. |
-| B14 | No clash detection (NG2): overlapping slots are drawn overlapping with a visible conflict tint but no blocking, no error. |
+| B14 | Overlap display only: overlapping slots are drawn side by side with a visible conflict tint. FR9 blocks *new* clashes at registration, so an overlap here would mean read data changed after it was booked. |
 
 ---
 
