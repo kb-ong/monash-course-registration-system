@@ -6,6 +6,7 @@ import CourseCard from '../components/CourseCard'
 import CreditSummary from '../components/CreditSummary'
 import RegisterDialog from '../components/RegisterDialog'
 import StatusBanner from '../components/StatusBanner'
+import WaitlistDialog from '../components/WaitlistDialog'
 import Button from '../components/ui/Button'
 import EmptyState from '../components/ui/EmptyState'
 import { Input, Select } from '../components/ui/Input'
@@ -17,6 +18,7 @@ import { cn } from '../lib/cn'
 import { facultyShort, semesterName } from '../lib/format'
 import { useRegistrationPeriod } from '../registration/RegistrationPeriodContext'
 import { useRegistrations } from '../registration/RegistrationsContext'
+import { useWaitlist } from '../registration/WaitlistContext'
 import type { Course, Semester } from '../types/api'
 
 const FACULTIES = [
@@ -32,6 +34,7 @@ export default function Catalog() {
   const [searchParams, setSearchParams] = useSearchParams()
   const { data, isRegistered } = useRegistrations()
   const { period } = useRegistrationPeriod()
+  const { entryFor } = useWaitlist()
 
   const qParam = searchParams.get('q') ?? ''
   const semesterParam = searchParams.get('semester') ?? ''
@@ -40,6 +43,7 @@ export default function Catalog() {
   const [semesters, setSemesters] = useState<Semester[]>([])
   const [semestersFailed, setSemestersFailed] = useState(false)
   const [selectedCourse, setSelectedCourse] = useState<Course | null>(null)
+  const [waitlistCourse, setWaitlistCourse] = useState<Course | null>(null)
   const searchRef = useRef<HTMLInputElement>(null)
 
   // The registration term is authoritative from the period endpoint; the semester list is a
@@ -319,7 +323,9 @@ export default function Catalog() {
                     totalCredits={totalCredits}
                     maxCredits={maxCredits}
                     activeSemester={activeSemester}
+                    waitlistPosition={entryFor(course.id)?.position}
                     onRegister={setSelectedCourse}
+                    onJoinWaitlist={setWaitlistCourse}
                   />
                 ))}
               </div>
@@ -341,6 +347,12 @@ export default function Catalog() {
         course={selectedCourse}
         open={selectedCourse !== null}
         onClose={() => setSelectedCourse(null)}
+        onSettled={() => reload()}
+      />
+      <WaitlistDialog
+        course={waitlistCourse}
+        open={waitlistCourse !== null}
+        onClose={() => setWaitlistCourse(null)}
         onSettled={() => reload()}
       />
     </>

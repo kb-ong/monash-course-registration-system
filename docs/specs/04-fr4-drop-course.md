@@ -2,15 +2,16 @@
 
 **Story:** US3, US4 · **Actors:** Student (P1), System
 **Endpoints:** `DELETE /api/registrations/{registrationId}`
-**Depends on:** [FR1](./01-fr1-student-login.md), [FR6](./06-fr6-capacity.md), [FR7](./07-fr7-registration-period.md).
+**Depends on:** [FR1](./01-fr1-student-login.md), [FR6](./06-fr6-capacity.md),
+[FR7](./07-fr7-registration-period.md), [FR11](./15-fr11-waitlist.md).
 
 ---
 
 ## 1. Requirement
 
 > A signed-in student can drop one of *their own* registrations while the window is open. The
-> registration is deleted, exactly one seat returns to the course, and the credit total drops
-> immediately.
+> registration is deleted, one seat returns to the course (and is immediately offered to the
+> waitlist when one exists, FR11), and the credit total drops immediately.
 
 ---
 
@@ -23,13 +24,14 @@
 | B3 | Unknown registration id (or already dropped) → 404 `REGISTRATION_NOT_FOUND`. |
 | B4 | Registration belongs to another student → 403 `NOT_OWNER`. The body must not reveal the owner's identity or the course. |
 | B5 | Period closed → 403 `REGISTRATION_CLOSED`. |
-| B6 | Success → delete the row, `availableSeats = min(capacity, availableSeats + 1)`, return 200 `{message, availableSeats}`. |
+| B6 | Success → delete the row, `availableSeats = min(capacity, availableSeats + 1)`, return 200 `{message, availableSeats}`. FR11 then promotes the first eligible waitlisted student (FR8/FR9/FR10), consuming the freed seat; in that case the returned `availableSeats` is unchanged (0 on a full course). Clients must render the returned value, never assume "+1". |
 | B7 | Decrement/increment is transactional and holds the same pessimistic course lock used by FR3 so a concurrent register/drop cannot lose an update. |
 | B8 | Dropping is **not** idempotent: the second call is 404. The UI must therefore disable the action while pending. |
 | B9 | Dropping is subject to the same period rule as registering — no "grace period", no admin override. |
 | B10 | A drop restores the seat even if the course is now at capacity (clamped, never exceeds `capacity`). |
 | B11 | Every attempt writes one audit row: success `DROP/SUCCESS`, failure `DROP/FAILURE` with a detail code (A-02). |
 | B12 | Dropping does not cascade to audit rows; history remains. |
+| B13 | The promotion step is part of the same transaction and course row lock (FR11, A-24). If the transaction fails, the drop is rolled back too — a student never loses a seat without the seat being accounted for. A promotion writes its own `WAITLIST_PROMOTED/SUCCESS` audit row for the promoted student. |
 
 ---
 
@@ -116,6 +118,7 @@ States:
 | Error — closed | 403 `REGISTRATION_CLOSED` | dialog closes, page banner switches to closed, toast info |
 | Error — gone | 404 | toast info "That registration no longer exists.", list refresh |
 | Error — network | no response | dialog stays open, inline retry |
+| Success — promoted | 200 with unchanged `availableSeats` | toast "Dropped FIT2004"; seat count shows the returned value (the freed seat went to the queue) |
 
 Guard: the dialog is only reachable when `period.open = true`; otherwise the `Drop` action renders
 disabled with a tooltip "Registration is closed".
@@ -136,6 +139,7 @@ disabled with a tooltip "Registration is closed".
 | T-FR4-08 | concurrency | `FIT3143` full (1/1) after one registration | drop and register simultaneously by two students | exactly one of the two mutating outcomes succeeds; final invariant `availableSeats + count = capacity` holds |
 | T-FR4-09 | security | no token | `DELETE` | 401 `UNAUTHORIZED`; row unchanged; no `DROP` audit row |
 | T-FR4-10 | edge | malformed id `"abc"` | `DELETE /api/registrations/abc` | 404 `REGISTRATION_NOT_FOUND` (not 400, not 500); one `DROP/FAILURE/VALIDATION_ERROR` audit row (A-19) |
+| T-FR4-11 | promotion | full course with a queued student | drop the holder | 200; the queued student is registered; `availableSeats` unchanged; C1 holds; promotion notification/audit written (FR11, T-FR11-13) |
 
 ---
 

@@ -4,12 +4,17 @@ import edu.monash.registration.config.JwtProperties;
 import edu.monash.registration.domain.Course;
 import edu.monash.registration.domain.CourseSchedule;
 import edu.monash.registration.domain.DayOfWeekCode;
+import edu.monash.registration.domain.Notification;
+import edu.monash.registration.domain.NotificationType;
 import edu.monash.registration.domain.Registration;
 import edu.monash.registration.domain.Student;
+import edu.monash.registration.domain.WaitlistEntry;
 import edu.monash.registration.repository.AuditLogRepository;
 import edu.monash.registration.repository.CourseRepository;
+import edu.monash.registration.repository.NotificationRepository;
 import edu.monash.registration.repository.RegistrationRepository;
 import edu.monash.registration.repository.StudentRepository;
+import edu.monash.registration.repository.WaitlistRepository;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
 import java.nio.charset.StandardCharsets;
@@ -39,6 +44,8 @@ public class TestFixtures {
     private final CourseRepository courseRepository;
     private final RegistrationRepository registrationRepository;
     private final AuditLogRepository auditLogRepository;
+    private final WaitlistRepository waitlistRepository;
+    private final NotificationRepository notificationRepository;
     private final JdbcTemplate jdbcTemplate;
     private final PasswordEncoder passwordEncoder;
     private final JwtProperties jwtProperties;
@@ -47,11 +54,14 @@ public class TestFixtures {
 
     public TestFixtures(StudentRepository studentRepository, CourseRepository courseRepository,
             RegistrationRepository registrationRepository, AuditLogRepository auditLogRepository,
+            WaitlistRepository waitlistRepository, NotificationRepository notificationRepository,
             JdbcTemplate jdbcTemplate, PasswordEncoder passwordEncoder, JwtProperties jwtProperties) {
         this.studentRepository = studentRepository;
         this.courseRepository = courseRepository;
         this.registrationRepository = registrationRepository;
         this.auditLogRepository = auditLogRepository;
+        this.waitlistRepository = waitlistRepository;
+        this.notificationRepository = notificationRepository;
         this.jdbcTemplate = jdbcTemplate;
         this.passwordEncoder = passwordEncoder;
         this.jwtProperties = jwtProperties;
@@ -63,6 +73,9 @@ public class TestFixtures {
 
     /** Clean every table in dependency order. */
     public void clearAll() {
+        // FR11 tables reference both student and course, so they go before either entity table.
+        notificationRepository.deleteAll();
+        waitlistRepository.deleteAll();
         auditLogRepository.deleteAll();
         registrationRepository.deleteAll();
         // FR8 join tables hold FKs to both course and student; clear them before the entities.
@@ -165,6 +178,19 @@ public class TestFixtures {
     public Registration registration(Student student, Course course) {
         return registrationRepository.save(
                 new Registration(student, course, MutableClock.currentInstant()));
+    }
+
+    /** FR11: put a student at the back of a course's queue without going through the API. */
+    public WaitlistEntry waitlist(Student student, Course course) {
+        return waitlistRepository.save(
+                new WaitlistEntry(student, course, MutableClock.currentInstant()));
+    }
+
+    /** FR11: a persisted notification, for inbox rendering tests. */
+    public Notification notification(Student student, Course course, NotificationType type,
+            String message) {
+        return notificationRepository.save(
+                new Notification(student, course, type, message, MutableClock.currentInstant()));
     }
 
     /**

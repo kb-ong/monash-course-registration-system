@@ -1,7 +1,8 @@
 # 00 — System Overview & Contract Reference
 
-**Project:** Monash Course Registration System — Phase 1 (FR1–FR7) + Phase 2 FR8/FR9/FR10
-**Status:** Phase 1 baseline v1.0; Phase 2 FR8 added in v1.1; FR9 added in v1.2; FR10 added in v1.3
+**Project:** Monash Course Registration System — Phase 1 (FR1–FR7) + Phase 2 FR8/FR9/FR10/FR11
+**Status:** Phase 1 baseline v1.0; Phase 2 FR8 added in v1.1; FR9 added in v1.2; FR10 added in
+v1.3; FR11 added in v1.4
 **Source of truth:** [`../../ORCHESTRATION.md`](../../ORCHESTRATION.md). Where this document and
 ORCHESTRATION.md disagree, ORCHESTRATION.md wins and this document is defective.
 **Audience:** coder-backend, coder-frontend, tester, reviewer.
@@ -14,9 +15,11 @@ Phase 1 delivers a single, coherent student-facing workflow: **log in → browse
 catalogue → register → review your timetable → drop**. Phase 2 adds **FR8 prerequisite validation**
 (registration verifies that the student's completed-course history contains every prerequisite of the
 requested course), **FR9 timetable clash detection** (registration rejects a course whose weekly slots
-overlap a course the student already holds) and **FR10 maximum credit-hour validation** (a configured
-per-semester credit limit, with the remaining credits shown to the student). The product must look and
-feel like a serious university product ("fancy university"), and it must be *correct under
+overlap a course the student already holds), **FR10 maximum credit-hour validation** (a configured
+per-semester credit limit, with the remaining credits shown to the student) and **FR11 waitlist
+management** (a full course offers a FIFO queue with a displayed position, and a dropped seat is
+automatically granted to the first eligible queued student, who is notified in-app). The product must
+look and feel like a serious university product ("fancy university"), and it must be *correct under
 concurrency* — the seat counter is the one place where a plausible-looking implementation is
 routinely wrong.
 
@@ -46,7 +49,9 @@ general student administration system.
 - **Phase 2:** FR8 prerequisite validation before registration, with missing prerequisites shown to
   the student and a prerequisite section on the course detail page; FR9 timetable clash detection,
   blocking overlapping registrations and naming every conflicting course and time; **FR10 maximum
-  credit-hour validation** with a configurable semester limit and remaining-credit warnings.
+  credit-hour validation** with a configurable semester limit and remaining-credit warnings; FR11
+  waitlist management (join a full course's FIFO queue, live position, automatic promotion on a
+  drop, in-app notifications).
 - NFR1 performance, NFR2 security, NFR3 availability, NFR4 audit logging, NFR5 usability.
 - Responsive desktop + mobile web, keyboard accessible, WCAG 2.1 AA contrast.
 - Seeded demo data (3 students, 16 active-semester courses, 3 prior-semester courses, a prerequisite
@@ -59,13 +64,13 @@ general student administration system.
 | NG1 | Admin/CRUD UI for courses, students, periods | No admin persona in Phase 1 |
 | NG2 | Travel-time buffers, exam timetables and automatic timetable optimisation | FR9 detects direct weekly-slot overlaps only; it is not a timetabling engine |
 | NG3 | Corequisites, program rules, prerequisite **administration UI** | FR8 covers prerequisites only; the prerequisite graph and completion history are seeded. Corequisites and program rules remain out of scope |
-| NG4 | Waitlists, seat offers, approvals | Contract defines hard 409 `COURSE_FULL` only |
+| NG4 | Seat-offer acceptance windows, approvals, priority/cohort queues | FR11 adds one FIFO waitlist per course with automatic promotion; it does not add offer acceptance, approvals or weighted queues |
 | NG5 | Payments, fees, invoices | Out of domain |
 | NG6 | Self-registration, password reset, MFA, SSO | Students are pre-provisioned; password is seeded |
 | NG7 | Persistence across restarts | H2 in-memory, `create-drop` by design |
 | NG8 | Pagination / infinite scroll of catalogue | ≤ 200 courses; single response |
 | NG9 | i18n / RTL / dark mode | English, light theme only |
-| NG10 | Email/SMS notifications, calendar (ICS) export | Not in contract |
+| NG10 | Email/SMS/push notifications, calendar (ICS) export | FR11 notifications are persisted in-app events only; no external delivery transport |
 | NG11 | Server-side rendering, SEO | Authenticated SPA |
 
 ---
@@ -84,7 +89,12 @@ general student administration system.
 | **Prerequisite** | A course that must appear in the student's completed-course history before the dependent course can be registered. |
 | **Completed course** | A row in `student_completed_course` linking a student to a course row. A current-semester registration is **not** a completion. |
 | **Registration** | A persisted `(student, course)` link with a timestamp. Unique per pair. |
-| **Drop** | Deletion of a registration; returns one seat. |
+| **Drop** | Deletion of a registration; returns one seat, which is offered to the waitlist first. |
+| **Waitlist entry** | A student's FIFO place in one full course's queue (`waitlist_entry`). It reserves no seat and no credits. |
+| **Position** | Derived 1-based rank of a waitlist entry by queue id (`1 + count(lower ids)`); shifts when an earlier student leaves or is promoted. |
+| **Promotion** | Automatic enrolment of the first eligible waitlisted student when a drop releases a seat, inside the drop transaction. |
+| **Eligible (waitlist)** | Not already registered for the course, all FR8 prerequisites completed, the course fits the configured FR10 credit limit, and it does not clash with the student's current timetable (FR9). |
+| **Notification** | A persisted in-app event for one student about one course (`notification`); FR11 adds `WAITLIST_JOINED` and `WAITLIST_PROMOTED`. |
 | **Registration window** | Half-open? **No** — closed interval `[startAt, endAt]`, inclusive at both ends (see FR7-AC3/AC4). |
 | **Seat meter** | UI component showing `availableSeats / capacity`. |
 | **Catalogue** | The list of courses in one semester. |
@@ -146,7 +156,11 @@ sequenceDiagram
     C-->>UI: 201 {registrationId, message, course, availableSeats}
 ```
 
-The order of steps 1–8 is **normative** (see §9.3, A-03, A-21, A-22, A-23).
+The order of steps 1–10 is **normative** (see §9.3, A-03, A-21, A-22, A-23). When step 8 finds no
+seat the response is `409 COURSE_FULL`; the client may then call E12 to join the waitlist, which
+repeats the academic checks (period, duplicate, prerequisites, configured credit limit) and only
+requires that the course is full. The drop/promotion transaction that gives a freed seat to the queue
+is described in [15 §6](./15-fr11-waitlist.md#6-promotion-sequence-normative).
 
 ---
 
@@ -158,10 +172,10 @@ The order of steps 1–8 is **normative** (see §9.3, A-03, A-21, A-22, A-23).
 | --- | --- | --- |
 | `config` | `SecurityConfig`, `JwtProperties`, `RegistrationProperties`, `CorsConfig`, `ClockConfig` | contain business rules |
 | `security` | `JwtService` (issue/parse), `JwtAuthenticationFilter`, `StudentPrincipal` | touch JPA entities directly |
-| `domain` | `Student`, `Course`, `CourseSchedule`, `Registration`, `AuditLog`, enums `DayOfWeekCode`, `AuditAction`, `AuditOutcome` | contain HTTP types |
-| `repository` | Spring Data interfaces, `@Lock(PESSIMISTIC_WRITE)` finder for register | contain business rules |
-| `service` | `AuthService`, `CatalogService`, `RegistrationService`, `RegistrationPeriodService`, `AuditService`, `CsvExportService`, `TimetableClashDetector` | build HTTP responses |
-| `api` | `AuthController`, `CatalogController`, `RegistrationController`, `GlobalExceptionHandler`, `dto/*` | contain persistence logic |
+| `domain` | `Student`, `Course`, `CourseSchedule`, `Registration`, `WaitlistEntry`, `Notification`, `AuditLog`, enums `DayOfWeekCode`, `AuditAction`, `AuditOutcome`, `NotificationType` | contain HTTP types |
+| `repository` | Spring Data interfaces, `@Lock(PESSIMISTIC_WRITE)` finders for the course, student and registration write paths | contain business rules |
+| `service` | `AuthService`, `CatalogService`, `RegistrationService`, `RegistrationPeriodService`, `EligibilityService`, `WaitlistService`, `NotificationService`, `TimetableClashDetector`, `AuditService`, `CsvExportService` | build HTTP responses |
+| `api` | `AuthController`, `CatalogController`, `RegistrationController`, `WaitlistController`, `NotificationController`, `GlobalExceptionHandler`, `dto/*` | contain persistence logic |
 | `seed` | `DataSeeder` (`CommandLineRunner`) | run in `test` profile *silently inconsistent* with §8 |
 
 ### 6.2 Frontend (`frontend/src`)
@@ -169,13 +183,14 @@ The order of steps 1–8 is **normative** (see §9.3, A-03, A-21, A-22, A-23).
 | Path | Responsibility |
 | --- | --- |
 | `api/client.ts` | axios instance, base `/api`, bearer interceptor, 401 → logout, error normalisation |
-| `api/{auth,courses,registrations}.ts` | typed endpoint wrappers |
+| `api/{auth,courses,registrations,waitlist,notifications}.ts` | typed endpoint wrappers |
 | `auth/AuthContext.tsx` | token + student profile, `login()`, `logout()`, hydration from `localStorage` |
 | `auth/RequireAuth.tsx` | route guard, preserves intended path for post-login redirect |
 | `components/ui/*` | design-system primitives (§09) |
-| `components/*` | `CourseCard`, `SeatMeter`, `CreditMeter`, `StatusBanner`, `ConfirmDialog`, `Toast`, `Skeleton`, `EmptyState`, `Header`, `Footer` |
+| `components/*` | `CourseCard`, `SeatMeter`, `StatusBanner`, `RegisterDialog`, `DropDialog`, `WaitlistDialog`, `Toast`, `Skeleton`, `EmptyState`, `Header` (with the FR11 notification bell), `Footer` |
 | `pages/*` | `Login`, `Dashboard`, `Catalog`, `CourseDetail`, `Schedule`, `NotFound` |
 | `hooks/*` | `useCourses`, `useDebouncedValue`, `useRegistrationPeriod`, `useToast` |
+| `registration/*` | `RegistrationPeriodContext`, `RegistrationsContext`, `WaitlistContext` (positions/poll), `NotificationsContext` (inbox/poll) |
 | `lib/format.ts` | time, date, credit formatting |
 | `styles/index.css` | Tailwind layers, font imports, print stylesheet |
 
@@ -195,6 +210,10 @@ erDiagram
     COURSE ||--|{ COURSE_SCHEDULE : "meets as"
     COURSE ||--o{ COURSE : "requires (course_prerequisite)"
     STUDENT ||--o{ COURSE : "completed (student_completed_course)"
+    STUDENT ||--o{ WAITLIST_ENTRY : "queues"
+    COURSE ||--o{ WAITLIST_ENTRY : "has queue"
+    STUDENT ||--o{ NOTIFICATION : "receives"
+    COURSE ||--o{ NOTIFICATION : "concerns"
     AUDIT_LOG }o..o{ STUDENT : "denormalised studentId"
     STUDENT {
         uuid id PK
@@ -238,6 +257,21 @@ erDiagram
     STUDENT_COMPLETED_COURSE {
         uuid student_id PK,FK
         uuid course_id PK,FK
+    }
+    WAITLIST_ENTRY {
+        bigint id PK
+        uuid student_id FK
+        uuid course_id FK
+        timestamp joined_at
+    }
+    NOTIFICATION {
+        bigint id PK
+        uuid student_id FK
+        uuid course_id FK
+        varchar type
+        varchar message
+        timestamp created_at
+        timestamp read_at
     }
     AUDIT_LOG {
         bigint id PK
@@ -318,7 +352,7 @@ never 500.
 | `id` | `BIGINT` | PK, identity | |
 | `student_id` | `VARCHAR(8)` | not null, indexed | business id, not FK |
 | `course_code` | `VARCHAR(10)` | nullable | null only if course id unresolvable |
-| `action` | `VARCHAR(20)` | not null, `CHECK IN ('REGISTER','DROP','REGISTER_REJECTED')` | |
+| `action` | `VARCHAR(20)` | not null, UPPER_SNAKE vocabulary in NFR4.2 (register, drop and FR11 waitlist actions) | |
 | `outcome` | `VARCHAR(10)` | not null, `CHECK IN ('SUCCESS','FAILURE')` | |
 | `detail` | `VARCHAR(255)` | nullable | failure reason code or human note |
 | `created_at` | `TIMESTAMP` | not null | UTC |
@@ -344,6 +378,33 @@ require itself; longer cycles are a catalogue-data concern (A-21).
 
 **Unique constraint `uk_student_completed_course (student_id, course_id)`.** A current-semester
 `registration` is not a completion; completion history is seeded in Phase 2 (A-21).
+
+### 7.9 `waitlist_entry` (FR11)
+
+| Column | Type | Constraints | Notes |
+| --- | --- | --- | --- |
+| `id` | `BIGINT` | PK, identity | queue order; assigned under the course row lock |
+| `student_id` | `UUID` | FK → `student.id`, not null | |
+| `course_id` | `UUID` | FK → `course.id`, not null | indexed |
+| `joined_at` | `TIMESTAMP` | not null | display only |
+
+**Unique constraint `uk_waitlist_student_course (student_id, course_id)`.** Position is derived
+(`1 + count(lower ids)`), never stored (A-24, [15](./15-fr11-waitlist.md)).
+
+### 7.10 `notification` (FR11)
+
+| Column | Type | Constraints | Notes |
+| --- | --- | --- | --- |
+| `id` | `BIGINT` | PK, identity | |
+| `student_id` | `UUID` | FK → `student.id`, not null | indexed |
+| `course_id` | `UUID` | FK → `course.id`, not null | |
+| `type` | `VARCHAR(30)` | not null, `WAITLIST_JOINED` \| `WAITLIST_PROMOTED` | |
+| `message` | `VARCHAR(255)` | not null | student-facing English |
+| `created_at` | `TIMESTAMP` | not null | UTC |
+| `read_at` | `TIMESTAMP` | nullable | null = unread; set once |
+
+In-app only; there is no email/SMS transport (NG10). Notifications are lost on restart with the rest
+of the in-memory data (NG7).
 
 ---
 
@@ -438,6 +499,21 @@ rejection naming both courses; registering `FIT2004` then `ENG1001` (TUE 14:00�
 success. No seeded pair meets exactly at a boundary; the half-open rule (touching times are allowed)
 is covered by T-FR9-03.
 
+### 8.7 FR11 waitlist demo (normative)
+
+`FIT3182` is full (capacity 1, Daniel holds the seat) and carries a two-student queue from startup:
+
+| studentId | Course | Position |
+| --- | --- | --- |
+| `32012345` Aisha Rahman | `FIT3182` | 1 |
+| `32011111` Priya Nair | `FIT3182` | 2 |
+
+Two `WAITLIST_JOINED` notifications are seeded with those positions. No other seed invariant changes:
+3 students, 19 courses, exactly 1 registration, 5 prerequisite edges, 4 completion rows.
+Demo: sign in as Daniel, drop `FIT3182`; Aisha is enrolled automatically with a `WAITLIST_PROMOTED`
+notification and Priya moves to position 1. Both students are eligible for the course (no
+prerequisites, 0 credits at seed time).
+
 ---
 
 ## 9. API contract (restated precisely)
@@ -469,15 +545,19 @@ Timestamps: see §9.6. Auth: `Authorization: Bearer <jwt>`.
 | 400 | `VALIDATION_ERROR` | missing/blank/malformed request field (including a non-UUID `courseId` in the body), too-long `q`, unknown `semester`, unparseable JSON | all |
 | 401 | `INVALID_CREDENTIALS` | unknown studentId **or** wrong password (identical response) | `POST /auth/login` |
 | 401 | `UNAUTHORIZED` | missing, malformed, expired or bad-signature token | all authenticated |
-| 403 | `REGISTRATION_CLOSED` | `serverTime` outside `[startAt, endAt]` | `POST /registrations`, `DELETE /registrations/{id}` |
+| 403 | `REGISTRATION_CLOSED` | `serverTime` outside `[startAt, endAt]` | `POST /registrations`, `DELETE /registrations/{id}`, `POST /waitlist` |
 | 403 | `NOT_OWNER` | registration exists but belongs to another student | `DELETE /registrations/{id}` |
-| 404 | `COURSE_NOT_FOUND` | unknown course id, **or** course not in the active semester (detail `SEMESTER_NOT_ACTIVE`, A-17) | `GET /courses/{id}`, `POST /registrations` |
+| 404 | `COURSE_NOT_FOUND` | unknown course id, **or** course not in the active semester (detail `SEMESTER_NOT_ACTIVE`, A-17) | `GET /courses/{id}`, `POST /registrations`, `POST /waitlist` |
 | 404 | `REGISTRATION_NOT_FOUND` | unknown registration id, already dropped, **or a malformed/non-UUID `registrationId`** (path ids are opaque: treated as not found, never 400; the attempt is still audited as `DROP/FAILURE` with `detail = VALIDATION_ERROR`, A-19) | `DELETE /registrations/{id}` |
 | 409 | `COURSE_FULL` | `availableSeats = 0` | `POST /registrations` |
 | 409 | `ALREADY_REGISTERED` | unique `(student, course)` already exists | `POST /registrations` |
-| 409 | `CREDIT_LIMIT_EXCEEDED` | `totalCredits + course.creditHours > maxCredits`, where `maxCredits` is `app.registration.max-credits` (default `24`, FR10) | `POST /registrations` |
-| 409 | `PREREQUISITE_NOT_MET` | one or more prerequisites are absent from the student's completion history; `message` names every missing course code, sorted ASC | `POST /registrations` |
+| 409 | `CREDIT_LIMIT_EXCEEDED` | `totalCredits + course.creditHours > maxCredits`, where `maxCredits` is `app.registration.max-credits` (default `24`, FR10) | `POST /registrations`, `POST /waitlist` |
+| 409 | `PREREQUISITE_NOT_MET` | one or more prerequisites are absent from the student's completion history; `message` names every missing course code, sorted ASC | `POST /registrations`, `POST /waitlist` |
 | 409 | `TIMETABLE_CLASH` | the requested course's weekly slots overlap a course the student already holds in the active semester; `message` names every conflicting course and its overlapping day/time | `POST /registrations` |
+| 409 | `SEAT_AVAILABLE` | FR11 join attempted on a course that is not full | `POST /waitlist` |
+| 409 | `ALREADY_WAITLISTED` | FR11 join attempted when already queued for the course | `POST /waitlist` |
+| 404 | `WAITLIST_NOT_FOUND` | unknown, removed, foreign or non-numeric waitlist id (opaque; audited as `WAITLIST_LEAVE/FAILURE`, detail `WAITLIST_NOT_FOUND` or `VALIDATION_ERROR`) | `DELETE /waitlist/{waitlistId}` |
+| 404 | `NOTIFICATION_NOT_FOUND` | unknown, foreign or non-numeric notification id | `POST /notifications/{notificationId}/read` |
 | 500 | `INTERNAL_ERROR` | unexpected server fault (never leaks detail) | all |
 
 `UNAUTHORIZED` and `INTERNAL_ERROR` are **elaborations** consistent with the frozen envelope; the
@@ -502,11 +582,19 @@ remain distinguishable in the audit trail (A-19).
 | E8 | POST | `/api/registrations` | bearer | 201 | 400, 401, 403, 404, 409 |
 | E9 | DELETE | `/api/registrations/{registrationId}` | bearer | 200 | 401, 403, 404 |
 | E10 | GET | `/api/registrations/export` | bearer | 200 `text/csv` | 401 |
+| E11 | GET | `/api/waitlist` | bearer | 200 | 401 |
+| E12 | POST | `/api/waitlist` | bearer | 201 | 400, 401, 403, 404, 409 |
+| E13 | DELETE | `/api/waitlist/{waitlistId}` | bearer | 200 | 401, 404 |
+| E14 | GET | `/api/notifications` | bearer | 200 | 401 |
+| E15 | POST | `/api/notifications/{notificationId}/read` | bearer | 200 | 401, 404 |
 
 **Validation precedence** for E8 (normative): auth → body → period → course exists in the active
 semester (A-17) → duplicate → **prerequisite completion (FR8)** → **timetable clash (FR9)** →
-credit limit → capacity. For E9:
-auth → registration exists → ownership → period.
+credit limit → capacity. For E9: auth → registration exists → ownership → period. For E12 (FR11):
+auth → body → period → course exists in the active semester → already registered → already waitlisted
+→ prerequisites → configured credit limit → seats available (a full course is required). Full
+request/response shapes for E11–E15 are in
+[15 §5](./15-fr11-waitlist.md#5-api-surface).
 
 ### 9.4 Payloads
 
@@ -683,9 +771,11 @@ ASC, then day MON→SUN, then `startTime`. No registrations → header row only 
 | Request | No token | Valid token | Expired/bad signature |
 | --- | --- | --- | --- |
 | E1, E3, E6 | 200 | 200 | 200 (ignored) |
-| E2, E4, E5, E7, E8, E9, E10 | 401 `UNAUTHORIZED` | proceed | 401 `UNAUTHORIZED` |
+| E2, E4, E5, E7, E8, E9, E10, E11, E12, E13, E14, E15 | 401 `UNAUTHORIZED` | proceed | 401 `UNAUTHORIZED` |
 
-There are **no roles** in Phase 1. Authorisation is limited to "is this your registration?" (E9).
+There are **no roles** in Phase 1. Authorisation is limited to "is this your registration?" (E9) and
+"is this your queue place / notification?" (FR11, E11–E15). Foreign waitlist and notification ids
+return 404 rather than 403, so opaque ids are never confirmed to another student.
 
 ### 9.6 Time & number formats
 
@@ -706,6 +796,9 @@ Period config values (`app.registration.period-*`) are wall-clock in the univers
 
 - `404` vs `403` on E9: existence first (404), then ownership (403), then period (403). This avoids
   leaking other students' registration ids as 403 when they do not exist for the caller.
+- `404` on E13/E15 is used for unknown **and** foreign ids deliberately (no ownership oracle).
+- A drop may hand the released seat to a waitlisted student, so E9's `availableSeats` can be
+  unchanged: always render the returned value instead of assuming `+1` (FR11).
 - Duplicate `POST` is **not** idempotent-friendly: it returns 409, it does not silently succeed.
 - No `ETag`, no caching headers on API responses (`Cache-Control: no-store`).
 - CORS: only `http://localhost:5173` (config `app.cors.allowed-origins`), methods
@@ -731,13 +824,16 @@ Period config values (`app.registration.period-*`) are wall-clock in the univers
 | A-12 | Client clock trust | Never. `open` and mutations are server-authoritative; UI uses `serverTime` offset | FR7 |
 | A-13 | Course list ordering | `code` ASC everywhere (catalogue, registrations items tiebreak) | §9.4 |
 | A-14 | `q` matching scope | `code` OR `name` only — not `instructor`, not `faculty` | FR2 |
+| A-22 | FR9 timetable clash model and check order | Pairwise weekly-slot overlap on the student's active-semester registrations; 409 `TIMETABLE_CLASH` between prerequisites and credit limit; student row locked for concurrent requests | [13](./13-fr9-timetable-clash.md), [11](./11-decisions.md) |
+| A-23 | FR10 configured semester credit limit | Positive `app.registration.max-credits` (default 24); 409 `CREDIT_LIMIT_EXCEEDED`; `maxCredits` + `remainingCredits` in E7 | [14](./14-fr10-max-credit-hours.md), [11](./11-decisions.md) |
+| A-24 | FR11 waitlist model, promotion and notifications | One FIFO queue per full course ordered by entry id; position derived; automatic promotion of the first **eligible** student in the drop transaction (re-checks FR8, FR10 and FR9); ineligible entries skipped and kept; in-app notifications only; joins/leaves audited | [15](./15-fr11-waitlist.md), [11](./11-decisions.md) |
 
 **The series continues at A-16 in [11 — Decision Log](./11-decisions.md)** (A-15 is unassigned; see the
 note there). A-16…A-19 cover the seed-as-full-course shape, the non-active-semester registration path,
 the normative schema constraints, and validation-rejected audit rows; A-20 is deferred, A-21
 records the Phase 2 prerequisite model and check order, A-22 records the timetable clash model and
-check order, and **A-23** records the FR10 configured credit limit. Decisions in 11 supersede the text
-they name.
+check order, **A-23** records the FR10 configured credit limit, and **A-24** records the FR11 waitlist
+model, promotion and notification decisions. Decisions in 11 supersede the text they name.
 
 ---
 
@@ -755,6 +851,8 @@ they name.
 | AS8 | Modern evergreen browsers (last 2 versions) | Transpile targets change |
 | AS9 | Network latency to the API < 150 ms locally | NFR1 thresholds need restating |
 | AS10 | No admin writes during a demo run | Concurrency tests can assume static catalogue |
+| AS11 | One FIFO waitlist per course, no priorities, cohorts or approvals | The queue model and promotion order change (A-24) |
+| AS12 | Automatic promotion is acceptable without an offer/acceptance step | FR11 needs an offer expiry/acceptance state machine |
 
 ---
 
@@ -771,8 +869,10 @@ they name.
 | RK7 | Design drift between two frontend passes | Medium | Medium | §[09](./09-ui-design-system.md) is prescriptive (tokens, sizes, states) |
 | RK8 | Token theft via XSS | Low | High | No `dangerouslySetInnerHTML`; no remote scripts; short 120-min expiry |
 | RK9 | BCrypt cost 10 slows login under load | Low | Low | Acceptable at demo scale; documented |
-| RK10 | Scope creep into waitlists, corequisites or full scheduling-engine rules | High | Medium | NG2/NG3/NG4 state the non-goals; FR9 stays a pairwise weekly-slot overlap check |
+| RK10 | Scope creep into seat offers, approvals or full scheduling-engine rules | High | Medium | NG2/NG3/NG4 state the non-goals; FR9 stays a pairwise weekly-slot overlap check and FR11 stays one FIFO queue |
 | RK11 | Two concurrent overlapping registrations by one student both pass the clash check | Low | Medium | Pessimistic lock on the student row serialises that student's register attempts (A-22) |
+| RK12 | Waitlist promotion bypasses FR8, FR9 or the credit cap | Medium | High | Promotion re-checks prerequisites, timetable clashes and the configured credit limit server-side, skips ineligible entries and never deletes them; covered by T-FR11-16/C02 |
+| RK13 | Queue position goes stale while another student is promoted | Medium | Low | Positions are derived server-side and both the queue and inbox poll every 30 s (plus focus refresh) |
 
 ---
 
@@ -790,10 +890,11 @@ they name.
 | **FR8 Prerequisite Validation (Phase 2)** | [12-fr8-prerequisites.md](./12-fr8-prerequisites.md) | backend + frontend |
 | **FR9 Timetable Clash Detection (Phase 2)** | [13-fr9-timetable-clash.md](./13-fr9-timetable-clash.md) | backend + frontend |
 | **FR10 Maximum Credit-Hour Validation (Phase 2)** | [14-fr10-max-credit-hours.md](./14-fr10-max-credit-hours.md) | backend + frontend |
+| **FR11 Waitlist Management (Phase 2)** | [15-fr11-waitlist.md](./15-fr11-waitlist.md) | backend + frontend |
 | NFR1–NFR5 | [08-non-functional.md](./08-non-functional.md) | all |
 | UI design system | [09-ui-design-system.md](./09-ui-design-system.md) | frontend |
 | Test strategy | [10-test-strategy.md](./10-test-strategy.md) | tester |
-| Decisions A-16…A-23 | [11-decisions.md](./11-decisions.md) | planner |
+| Decisions A-16…A-24 | [11-decisions.md](./11-decisions.md) | planner |
 
 **User stories** (referenced by every FR file):
 

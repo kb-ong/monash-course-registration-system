@@ -26,6 +26,7 @@ that document is defective and this file wins.
 | **A-21** | Phase 2 FR8: what is a prerequisite, what does "completed" mean, and where does the check sit? | Prerequisites are a self-referencing many-to-many edge on `course` (`course_prerequisite`), and completion is a separate `student_completed_course` history keyed by course **id**. A current-semester `registration` never counts as completion. Registration requires every prerequisite id in the history, otherwise **409 `PREREQUISITE_NOT_MET`** with every missing code sorted in `message`; the check is inserted between duplicate and timetable clash (see the subsection below). Course payloads carry `prerequisites: [{id,code,name}]`, ordered `code` ASC. The graph and history are seeded; there is no administration UI (NG3). | `12-fr8-prerequisites.md`, `00 §7.7–7.8`, `00 §8.5`, `00 §9.2`, `08 NFR4.2` E-14 |
 | **A-22** | Phase 2 FR9: how is a timetable clash defined, and where does the check sit? | Clash detection is a pairwise overlap of weekly `course_schedule` slots: same `day`, `start < otherEnd` and `otherStart < end` (half-open intervals, so touching boundaries are allowed). It compares the requested course against the student's **active-semester registrations only**, ignores other students, and blocks with **409 `TIMETABLE_CLASH`** naming every conflicting course and overlapping slot. The check sits between prerequisites and the credit limit; registrations are read under a pessimistic lock on the student row so two concurrent overlapping submissions admit at most one. No schema change. | `13-fr9-timetable-clash.md`, `00 §8.6`, `00 §9.2`, `08 NFR4.2` E-15 |
 | **A-23** | Phase 2 FR10: where does the semester credit limit live, and how is it surfaced? | The limit is the positive integer `app.registration.max-credits` (env `REGISTRATION_MAX_CREDITS`), default **24**, with one value for the active semester; non-positive values fail startup. Registration allows `total + creditHours <= maxCredits` and otherwise returns **409 `CREDIT_LIMIT_EXCEEDED`** after prerequisites and timetable clash and before capacity, with no row and no seat change; the message names the limit and the remaining credits. `GET /api/registrations` returns `maxCredits` and `remainingCredits = max(0, maxCredits − totalCredits)` alongside `totalCredits`; the SPA uses those fields and never hardcodes a number. The default 24 preserves Phase 1 behaviour; `REGISTRATION_MAX_CREDITS=18` reproduces the FR10 example. | `14-fr10-max-credit-hours.md`, `00 §9.2`, `00 §9.4` E7, `03-fr3-register-course.md`, `05-fr5-view-registered.md`, `09-ui-design-system.md` |
+| **A-24** | Phase 2 FR11: what is a waitlist, how is it ordered, when is a seat granted, and what does "notification" mean? | One FIFO queue per full course (`waitlist_entry`, unique per student/course, ordered by entry id; position derived). Joining requires an open window and a **full** active-semester course, and applies the FR8/FR3 academic checks (duplicate then waitlist duplicate → prerequisites → configured credit limit → seats available). A drop adds the seat back and promotes the first **eligible** queued student in the same transaction and under the same course lock (FR6); eligibility is re-checked against FR8 prerequisites, FR10's configured limit and FR9 timetable clashes, and ineligible entries are skipped and stay queued. A successful direct registration clears the student's queue row. Notifications are persisted **in-app** rows (join confirmation, automatic promotion) with a header inbox; there is no email/SMS. Waitlist joins/leaves and promotions are audited (NFR4 E-16…E-20). | `15-fr11-waitlist.md`, `00 §7.9–7.10`, `00 §8.7`, `00 §9.2`, `08 NFR4.2` E-16…E-20 |
 
 ### A-21 — Phase 2 FR8 prerequisite model and check order
 
@@ -115,6 +116,52 @@ open, shows the server message and refetches the registrations so a stale total 
 example is exercised by starting with `REGISTRATION_MAX_CREDITS=18`; the configured-limit tests set
 that property explicitly.
 
+### A-24 — Phase 2 FR11 waitlist model, promotion and notifications
+
+**Model.** `waitlist_entry (id BIGINT identity, student_id, course_id, joined_at)` with
+`uk_waitlist_student_course`. The identity `id` is the FIFO order because every queue mutation runs
+while holding the course row lock (FR6), so joins are serialised. Position is **derived**
+(`1 + count(entries with a lower id)`), never stored, so a leave or promotion re-ranks the queue
+immediately with no renumbering job. `notification` rows carry `student_id`, `course_id`, `type`
+(`WAITLIST_JOINED` / `WAITLIST_PROMOTED`), `message`, `created_at` and nullable `read_at`.
+
+**Join.** Check order is normative: auth → body → period → course in the active semester → already
+registered → already waitlisted → prerequisites → credit limit → seats available. A course that is
+not full is rejected with **409 `SEAT_AVAILABLE`**; the queue is only for full courses. A student may
+queue for several courses and may not exceed the configured credit cap when joining (the queue itself does
+not consume credits). Positions are returned by E12 and E11.
+
+**Promotion.** A drop deletes the registration, adds the seat back, then walks the queue in id order
+and enrols the first student who is still eligible: not duplicated, all prerequisites met (FR8), the
+course fits the configured credit limit (FR10), and it does not clash with the student's current
+timetable (FR9). The student row is locked before those reads, matching FR9's register lock order.
+Promotion is **automatic** — there is no offer/acceptance window — and forms one transaction with the
+drop, under the same course row lock, so `availableSeats + registrations = capacity` still holds and
+the freed seat cannot be taken twice. Ineligible entries are skipped, not deleted: they may become
+eligible later. If nobody is eligible the seat stays available. A successful direct registration
+clears the student's own queue row for that course (`register` supersedes waiting).
+
+**Notifications.** In-app only (NG10): E14 lists the authenticated student's notifications newest
+first with an unread count, E15 marks one read idempotently; the header bell polls every 30 s so a
+promotion performed by another student becomes visible. No email, SMS or push transport exists.
+
+**Audit.** E-16 join success (`WAITLIST_JOIN`), E-17 join rejection (`WAITLIST_REJECTED` with detail
+code), E-18 leave success (`WAITLIST_LEAVE`), E-19 leave rejection (`WAITLIST_LEAVE/FAILURE`),
+E-20 promotion (`WAITLIST_PROMOTED/SUCCESS`, written for the promoted student alongside the
+dropper's E-07).
+
+**UI.** A full course offers **Join waitlist** (gold) while the window is open and the student is
+under the configured credit cap; the detail page shows the live position and a **Leave waitlist** action; the
+dashboard has a Waitlist section and the header a notification inbox. Every surface offering joining
+says that a queue place reserves neither a seat nor credits.
+
+**Seed.** `00 §8.7` queues Aisha (#1) then Priya (#2) for the full `FIT3182`, with two join
+notifications. Everything else in §8 is unchanged.
+
+**Supersedes.** NG4 in `00 §3.2` (waitlists are now in scope; seat offers/approvals are not), B12 in
+`06 §2` ("no waitlist"), the full-course UI copy in `03 §6`/`09 §6.4`, and the "no waitlist" note in
+the catalogue/course-detail copy.
+
 ---
 
 ## Supersession record
@@ -129,6 +176,9 @@ that property explicitly.
 | No schema constraints recorded for `course_schedule` | `00 §7.4` (checks stated but not enumerated as a decision) | A-18 |
 | `maxCredits` is "always the literal 24" | `05 §2` B3, `00 §9.4` E7 | A-23 (configured `app.registration.max-credits`, default 24, plus `remainingCredits`) |
 | "24 credit point limit" in dialog and error copy | `03 §1`, `03 §6`, `09 §5.7`, `09 §9` | A-23 (response-driven limit and remaining credits) |
+| "Waitlists, seat offers, approvals" are non-goals | `00 §3.2` NG4 | A-24 (one FIFO waitlist; offers/approvals still out) |
+| "No queueing, no waitlist … a 409 `COURSE_FULL` is final" | `06 §2` B12 | A-24 (409 remains the E8 answer; the client may then join the queue) |
+| Full course renders "Full" with no path forward | `03 §6`, `09 §6.4`, catalogue UI copy | A-24 (Join waitlist while the window is open and the cap allows) |
 
 ---
 
@@ -161,6 +211,10 @@ that property explicitly.
   denied on every prerequisite course. Prerequisite edges are on `FIT2004`, `FIT2099`, `FIT3077` and
   `MTH1030` only, so all Phase 1 capacity/concurrency courses (`FIT3143`, `FIT3182`, `FIT1045`) and
   every existing Phase 1 test remain unaffected.
+- FR11 queues Aisha (#1) then Priya (#2) for the full `FIT3182` at startup. Daniel dropping his
+  `FIT3182` registration promotes Aisha automatically and moves Priya to #1; this is the waitlist
+  demo (`00 §8.7`). FR9 and FR10 add no seed rows, so 3 students, 19 courses, 1 registration, 5
+  prerequisite edges, 4 completion rows and 2 waitlist entries remain the complete seed.
 
 ---
 

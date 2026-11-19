@@ -5,8 +5,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import edu.monash.registration.domain.Student;
 import edu.monash.registration.repository.AuditLogRepository;
 import edu.monash.registration.repository.CourseRepository;
+import edu.monash.registration.repository.NotificationRepository;
 import edu.monash.registration.repository.RegistrationRepository;
 import edu.monash.registration.repository.StudentRepository;
+import edu.monash.registration.repository.WaitlistRepository;
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -56,6 +58,12 @@ public abstract class BaseIntegrationTest {
 
     @Autowired
     protected AuditLogRepository auditLogRepository;
+
+    @Autowired
+    protected WaitlistRepository waitlistRepository;
+
+    @Autowired
+    protected NotificationRepository notificationRepository;
 
     @BeforeEach
     void resetClockAndDatabase() {

@@ -1,9 +1,17 @@
 import type { Course } from '../types/api'
 
-export type RegisterBlockKind = 'none' | 'registered' | 'semester' | 'full' | 'period' | 'credit'
+export type RegisterBlockKind =
+  | 'none'
+  | 'registered'
+  | 'semester'
+  | 'waitlist'
+  | 'waitlisted'
+  | 'full'
+  | 'period'
+  | 'credit'
 
 export interface RegisterActionState {
-  /** True when the primary Register action must be disabled. */
+  /** True when the primary action must be disabled. */
   disabled: boolean
   label: string
   reason?: string
@@ -21,14 +29,20 @@ interface RegisterActionArgs {
   maxCredits?: number
   /** The semester registrations are currently accepted for. Empty when unknown. */
   activeSemester?: string
+  /** FR11: the student's 1-based queue position when already waiting for this course. */
+  waitlistPosition?: number
 }
 
 /**
- * Single source of truth for the catalogue/detail Register action state.
+ * Single source of truth for the catalogue/detail primary action state.
  *
- * Precedence: already registered → different term → full → period closed → credit limit.
- * A course from a different term is blocked even while the window is open, so the UI never
- * offers a registration the backend would reject (FR3 B1: active semester only).
+ * Precedence: already registered → different term → already waitlisted → period closed →
+ * credit limit → full course (waitlist) → register.
+ *
+ * A course from a different term is blocked even while the window is open, so the UI never offers
+ * a registration or a queue place the backend would reject (FR3 B1). A full course offers the
+ * waitlist, but the client still treats that as advisory: the server can answer SEAT_AVAILABLE,
+ * ALREADY_WAITLISTED or an eligibility rejection (FR11).
  */
 export function registerActionState({
   course,
@@ -37,6 +51,7 @@ export function registerActionState({
   totalCredits,
   maxCredits,
   activeSemester,
+  waitlistPosition,
 }: RegisterActionArgs): RegisterActionState {
   const nextCredits = totalCredits + course.creditHours
 
@@ -54,12 +69,12 @@ export function registerActionState({
     }
   }
 
-  if (course.availableSeats <= 0) {
+  if (waitlistPosition !== undefined) {
     return {
       disabled: true,
-      label: 'Full',
-      reason: 'No seats available',
-      kind: 'full',
+      label: `On waitlist · #${waitlistPosition}`,
+      reason: `You are #${waitlistPosition} on the waitlist for this course.`,
+      kind: 'waitlisted',
       nextCredits,
     }
   }
@@ -83,6 +98,16 @@ export function registerActionState({
         remaining === 1 ? '' : 's'
       } remaining.`,
       kind: 'credit',
+      nextCredits,
+    }
+  }
+
+  if (course.availableSeats <= 0) {
+    return {
+      disabled: false,
+      label: 'Join waitlist',
+      reason: 'This course is full — join the waitlist',
+      kind: 'waitlist',
       nextCredits,
     }
   }

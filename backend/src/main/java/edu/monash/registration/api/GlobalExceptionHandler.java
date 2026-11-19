@@ -5,6 +5,7 @@ import edu.monash.registration.error.ApiErrorWriter;
 import edu.monash.registration.error.ApiException;
 import edu.monash.registration.error.ErrorEnvelope;
 import edu.monash.registration.error.MalformedRegistrationIdException;
+import edu.monash.registration.error.MalformedWaitlistIdException;
 import edu.monash.registration.error.ValidationException;
 import edu.monash.registration.security.StudentPrincipal;
 import edu.monash.registration.service.AuditWriter;
@@ -45,6 +46,7 @@ public class GlobalExceptionHandler {
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
     private static final String REGISTRATIONS_PATH = "/api/registrations";
+    private static final String WAITLIST_PATH = "/api/waitlist";
 
     private final ApiErrorWriter errorWriter;
     private final AuditWriter auditWriter;
@@ -98,6 +100,14 @@ public class GlobalExceptionHandler {
                 "Invalid value for " + ex.getName() + ".");
     }
 
+    /** A waitlist path id that is not numeric: 404 WAITLIST_NOT_FOUND, audited as WAITLIST_LEAVE. */
+    @ExceptionHandler(MalformedWaitlistIdException.class)
+    public ResponseEntity<ErrorEnvelope> handleMalformedWaitlistId(
+            MalformedWaitlistIdException ex, HttpServletRequest request) {
+        auditRejection(request);
+        return build(ex.getStatus(), ex.getCode(), ex.getMessage());
+    }
+
     /** A path id that is not a UUID: 404 per the contract, audited as DROP_REJECTED. */
     @ExceptionHandler(MalformedRegistrationIdException.class)
     public ResponseEntity<ErrorEnvelope> handleMalformedRegistrationId(MalformedRegistrationIdException ex,
@@ -109,7 +119,8 @@ public class GlobalExceptionHandler {
     /**
      * Backstop for the register path only: a race that slips past the existsBy check still maps to
      * 409, never 500 (FR3-B12). A constraint violation anywhere else is not "already registered"
-     * and must not be reported as such.
+     * and must not be reported as such. FR11 adds the same backstop for a concurrent duplicate
+     * waitlist join.
      */
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ResponseEntity<ErrorEnvelope> handleIntegrity(DataIntegrityViolationException ex,
@@ -118,6 +129,11 @@ public class GlobalExceptionHandler {
             log.warn("persistence.constraint.violation mapped=ALREADY_REGISTERED");
             return build(HttpStatus.CONFLICT, "ALREADY_REGISTERED",
                     "You are already registered in this course.");
+        }
+        if (isWaitlistJoinAttempt(request)) {
+            log.warn("persistence.constraint.violation mapped=ALREADY_WAITLISTED");
+            return build(HttpStatus.CONFLICT, "ALREADY_WAITLISTED",
+                    "You are already on the waitlist for this course.");
         }
         log.error("persistence.constraint.violation unmapped path={} method={}",
                 request.getRequestURI(), request.getMethod(), ex);
@@ -183,6 +199,12 @@ public class GlobalExceptionHandler {
         if (isDropAttempt(request)) {
             return AuditAction.DROP_REJECTED;
         }
+        if (isWaitlistJoinAttempt(request)) {
+            return AuditAction.WAITLIST_REJECTED;
+        }
+        if (isWaitlistLeaveAttempt(request)) {
+            return AuditAction.WAITLIST_LEAVE;
+        }
         return null;
     }
 
@@ -194,6 +216,16 @@ public class GlobalExceptionHandler {
     private static boolean isDropAttempt(HttpServletRequest request) {
         return HttpMethod.DELETE.matches(request.getMethod())
                 && request.getRequestURI().startsWith(REGISTRATIONS_PATH + "/");
+    }
+
+    private static boolean isWaitlistJoinAttempt(HttpServletRequest request) {
+        return HttpMethod.POST.matches(request.getMethod())
+                && WAITLIST_PATH.equals(request.getRequestURI());
+    }
+
+    private static boolean isWaitlistLeaveAttempt(HttpServletRequest request) {
+        return HttpMethod.DELETE.matches(request.getMethod())
+                && request.getRequestURI().startsWith(WAITLIST_PATH + "/");
     }
 
     private static String currentStudentId() {

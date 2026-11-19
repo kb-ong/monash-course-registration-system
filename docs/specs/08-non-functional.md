@@ -106,7 +106,7 @@ Order note: on `POST /registrations` with **no token and a closed window**, the 
 | --- | --- | --- | --- | --- |
 | T-NFR2-01 | security | seeded student | query `student` table | `password_hash` starts `$2a$10$`, length 60, and is not `Password123!` |
 | T-NFR2-02 | security | any endpoint returning a student/course/registration | inspect JSON for `password`, `passwordHash`, `$2a$` | zero matches |
-| T-NFR2-03 | security | no token / bad token / expired token | call each protected endpoint | 401 `UNAUTHORIZED` for all 7 protected routes (`E2,E4,E5,E7,E8,E9,E10`, `00 §9.3`) |
+| T-NFR2-03 | security | no token / bad token / expired token | call each protected endpoint | 401 `UNAUTHORIZED` for all 12 protected routes (`E2,E4,E5,E7–E15`, `00 §9.3`) |
 | T-NFR2-04 | security | valid token | `DELETE` another student's registration | 403 `NOT_OWNER`; body contains no course code |
 | T-NFR2-05 | security | any 4xx/5xx | inspect body | matches `{"error":{"code","message","timestamp"}}`, no `trace`, no `exception`, no `at edu.monash` |
 | T-NFR2-06 | security | forced 500 (e.g. repository stub throwing) | call endpoint | 500 `INTERNAL_ERROR` with generic message; server log holds the stack trace, response does not |
@@ -167,8 +167,10 @@ Phase 1 runs as a single Spring Boot process with an in-memory database. Honest 
 
 ### NFR4.1 Requirement
 
-Every **authenticated** **register** and **drop** attempt produces exactly one `audit_log` row —
-success or failure — written even when the business transaction rolls back. Reads are not audited.
+Every **authenticated** register, drop, waitlist join and waitlist leave attempt produces exactly one
+`audit_log` row — success or failure — written even when the business transaction rolls back. Reads
+are not audited. A waitlist **promotion** is not an attempt by the promoted student, but it is an
+auditable enrolment event and writes its own E-20 row.
 
 | ID | Requirement |
 | --- | --- |
@@ -198,15 +200,24 @@ success or failure — written even when the business transaction rolls back. Re
 | E-13 | Drop, request rejected by validation — `registrationId` path value not a UUID (A-19) | `DROP` | `FAILURE` | `VALIDATION_ERROR` | 404 |
 | E-14 | Register, one or more prerequisites not completed (FR8, A-21) | `REGISTER_REJECTED` | `FAILURE` | `PREREQUISITE_NOT_MET` | 409 |
 | E-15 | Register, requested course overlaps an existing registration (FR9, A-22) | `REGISTER_REJECTED` | `FAILURE` | `TIMETABLE_CLASH` | 409 |
+| E-16 | Waitlist join success (FR11, A-24) | `WAITLIST_JOIN` | `SUCCESS` | `null` | 201 |
+| E-17 | Waitlist join rejected (FR11) | `WAITLIST_REJECTED` | `FAILURE` | `REGISTRATION_CLOSED`, `COURSE_NOT_FOUND`, `SEMESTER_NOT_ACTIVE`, `ALREADY_REGISTERED`, `ALREADY_WAITLISTED`, `PREREQUISITE_NOT_MET`, `CREDIT_LIMIT_EXCEEDED`, `SEAT_AVAILABLE`, `VALIDATION_ERROR` | 4xx |
+| E-18 | Waitlist leave success (FR11) | `WAITLIST_LEAVE` | `SUCCESS` | `null` | 200 |
+| E-19 | Waitlist leave rejected (FR11) | `WAITLIST_LEAVE` | `FAILURE` | `WAITLIST_NOT_FOUND`, `VALIDATION_ERROR` | 404 |
+| E-20 | Automatic promotion from the waitlist (FR11, inside E9's transaction) | `WAITLIST_PROMOTED` | `SUCCESS` | `null` | 200 |
 
-**Completeness rule.** E-01…E-15 is the **entire** audit vocabulary. Every register and drop request
-that reaches an authenticated handler produces exactly one row from this table, and no other row shape
-is permitted. In particular:
+**Completeness rule.** E-01…E-20 is the **entire** audit vocabulary. Every register, drop, waitlist
+join and waitlist leave request that reaches an authenticated handler produces exactly one row from
+this table, and no other row shape is permitted. In particular:
 
 - E-03 and E-11 share HTTP `404 COURSE_NOT_FOUND` deliberately (no semester oracle); only `detail`
   differs, and `detail` is never serialised in a response (§7.6, NFR2-S6).
 - E-08 and E-13 share HTTP `404 REGISTRATION_NOT_FOUND` deliberately: a malformed path id is treated
   as not found, never as a 400 (FR4 §3, `00 §9.2`); only `detail` differs.
+- E-19 covers both an unknown/foreign waitlist id (`detail = WAITLIST_NOT_FOUND`) and a non-numeric
+  path id (`detail = VALIDATION_ERROR`); both are HTTP 404 because waitlist ids are opaque.
+- A drop that promotes a waitlisted student writes E-07 for the dropper **and** E-20 for the promoted
+  student, in one transaction.
 - `course_code` is the resolved course code where one exists; it is `null` on E-12/E-13 and on any row
   where the course id never resolved (A-19, §7.6).
 - On E-12/E-13 the student is the JWT subject, so the row is still attributable.
@@ -233,6 +244,8 @@ Out of scope for `audit_log` (application log only): login success/failure (A-10
 | T-NFR4-10 | audit | authenticated student | `POST /api/registrations` with `courseId="not-a-uuid"`, then `DELETE /api/registrations/not-a-uuid` | 400 `VALIDATION_ERROR` for the register, 404 `REGISTRATION_NOT_FOUND` for the drop; exactly 2 rows — E-12 (`REGISTER_REJECTED`) and E-13 (`DROP`), both `detail=VALIDATION_ERROR`, `course_code` null (A-19) |
 | T-NFR4-11 | audit | student missing a prerequisite | `POST /api/registrations` for the dependent course | exactly 1 row E-14, `course_code` = dependent course; no registration row; seat count unchanged |
 | T-NFR4-12 | audit | student already holds an overlapping course | `POST /api/registrations` for the conflicting course | exactly 1 row E-15, `course_code` = requested course; no registration row; seat count unchanged |
+| T-NFR4-13 | audit | full course | successful waitlist join; duplicate join; successful leave; unknown/malformed leave | one row per attempt: E-16, E-17 (`ALREADY_WAITLISTED`), E-18, E-19 (`WAITLIST_NOT_FOUND` then `VALIDATION_ERROR`) |
+| T-NFR4-14 | audit | full course, queued student, holder drops | inspect audit | E-07 for the dropper and exactly one E-20 `WAITLIST_PROMOTED/SUCCESS` for the promoted student |
 
 ---
 

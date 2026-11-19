@@ -6,28 +6,35 @@ import { normalizeApiError, type ApiError } from '../api/client'
 import DropDialog from '../components/DropDialog'
 import RegisterDialog from '../components/RegisterDialog'
 import StatusBanner from '../components/StatusBanner'
+import WaitlistDialog from '../components/WaitlistDialog'
 import Badge from '../components/ui/Badge'
 import Button from '../components/ui/Button'
 import ButtonLink from '../components/ui/ButtonLink'
+import { useToast } from '../components/ui/Toast'
 import SeatMeter from '../components/ui/SeatMeter'
 import { Skeleton } from '../components/ui/Skeleton'
 import { creditPoints, dayShort, formatDate, scheduleLine, semesterName } from '../lib/format'
 import { registerActionState } from '../lib/registrationState'
 import { useRegistrationPeriod } from '../registration/RegistrationPeriodContext'
 import { useRegistrations } from '../registration/RegistrationsContext'
+import { useWaitlist } from '../registration/WaitlistContext'
 import type { Course, RegistrationItem } from '../types/api'
 
 export default function CourseDetail() {
   const { id } = useParams<{ id: string }>()
   const { data, isRegistered, getRegistration } = useRegistrations()
   const { period } = useRegistrationPeriod()
+  const { entryFor, leave, mutatingWaitlistId } = useWaitlist()
+  const { pushToast } = useToast()
 
   const [course, setCourse] = useState<Course | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<ApiError | null>(null)
   const [reloadToken, setReloadToken] = useState(0)
   const [registerOpen, setRegisterOpen] = useState(false)
+  const [waitlistOpen, setWaitlistOpen] = useState(false)
   const [dropTarget, setDropTarget] = useState<RegistrationItem | null>(null)
+  const [leavingWaitlist, setLeavingWaitlist] = useState(false)
 
   useEffect(() => {
     if (!id) {
@@ -115,6 +122,8 @@ export default function CourseDetail() {
   const full = course.availableSeats <= 0
   const periodOpen = period?.open ?? false
   const activeSemester = period?.semester ?? ''
+  const waitlistEntry = entryFor(course.id)
+  const waitlisted = waitlistEntry !== undefined
 
   const action = registerActionState({
     course,
@@ -123,6 +132,7 @@ export default function CourseDetail() {
     totalCredits,
     maxCredits,
     activeSemester,
+    waitlistPosition: waitlistEntry?.position,
   })
   const semesterBlocked = action.kind === 'semester'
   const actionLabel = action.label
@@ -131,6 +141,32 @@ export default function CourseDetail() {
       ? `Registration closed ${formatDate(period.endAt)}.`
       : action.reason
   const disabled = action.disabled
+  const openPrimaryAction = () => {
+    if (action.kind === 'waitlist') setWaitlistOpen(true)
+    else setRegisterOpen(true)
+  }
+
+  const handleLeaveWaitlist = async () => {
+    if (!waitlistEntry || leavingWaitlist) return
+    setLeavingWaitlist(true)
+    try {
+      await leave(waitlistEntry.waitlistId)
+      pushToast({
+        variant: 'info',
+        title: `Left the waitlist for ${course.code}`,
+        description: 'You can join again while the course is full.',
+      })
+      reload()
+    } catch {
+      pushToast({
+        variant: 'error',
+        title: "Couldn't leave the waitlist.",
+        description: 'Try again in a moment.',
+      })
+    } finally {
+      setLeavingWaitlist(false)
+    }
+  }
 
   return (
     <>
@@ -256,7 +292,13 @@ export default function CourseDetail() {
                   <p className="text-body font-semibold text-ink-900">
                     {course.availableSeats} of {course.capacity} seats available
                   </p>
-                  {full ? <Badge variant="full">Full</Badge> : null}
+                  {full ? (
+                    waitlisted ? (
+                      <Badge variant="waitlist">Waitlist</Badge>
+                    ) : (
+                      <Badge variant="full">Full</Badge>
+                    )
+                  ) : null}
                 </div>
                 <SeatMeter
                   availableSeats={course.availableSeats}
@@ -288,19 +330,46 @@ export default function CourseDetail() {
                         </p>
                       ) : null}
                     </div>
+                  ) : waitlisted ? (
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2">
+                        <Badge variant="waitlist">Waitlist #{waitlistEntry.position}</Badge>
+                      </div>
+                      <p className="text-body text-ink-700">
+                        You're #{waitlistEntry.position} on the waitlist for this full course.
+                      </p>
+                      <p className="text-body-sm text-ink-500">
+                        We'll enroll you automatically when a seat opens. Waiting does not add
+                        credits or reserve a seat.
+                      </p>
+                      <Button
+                        variant="secondary"
+                        className="w-full"
+                        onClick={() => void handleLeaveWaitlist()}
+                        loading={leavingWaitlist}
+                        disabled={leavingWaitlist || mutatingWaitlistId !== null}
+                      >
+                        Leave waitlist
+                      </Button>
+                    </div>
                   ) : (
                     <>
                       <Button
-                        variant="primary"
+                        variant={action.kind === 'waitlist' ? 'gold' : 'primary'}
                         size="lg"
                         className="w-full"
-                        onClick={() => setRegisterOpen(true)}
+                        onClick={openPrimaryAction}
                         disabled={disabled}
                         title={actionReason}
                       >
                         {actionLabel}
                       </Button>
-                      {!semesterBlocked && action.kind !== 'credit' ? (
+                      {action.kind === 'waitlist' ? (
+                        <p className="mt-3 text-body-sm text-ink-500">
+                          This course is full. Join the waitlist and we'll enroll you automatically
+                          when a seat opens.
+                        </p>
+                      ) : !semesterBlocked && action.kind !== 'credit' ? (
                         <p className="mt-3 text-body-sm text-ink-500">
                           {maxCredits === undefined || remainingCredits === null
                             ? `Adding this brings you to ${action.nextCredits} credits.`
@@ -312,11 +381,6 @@ export default function CourseDetail() {
                       {semesterBlocked ? (
                         <p className="mt-3 text-body-sm text-ink-700">
                           {actionReason} Registration is open for {semesterName(activeSemester)} only.
-                        </p>
-                      ) : null}
-                      {action.kind === 'full' ? (
-                        <p className="mt-2 text-body-sm text-danger-600">
-                          No seats available. Join the catalogue next semester — there is no waitlist.
                         </p>
                       ) : null}
                       {action.kind === 'period' ? (
@@ -384,6 +448,12 @@ export default function CourseDetail() {
         course={course}
         open={registerOpen}
         onClose={() => setRegisterOpen(false)}
+        onSettled={reload}
+      />
+      <WaitlistDialog
+        course={course}
+        open={waitlistOpen}
+        onClose={() => setWaitlistOpen(false)}
         onSettled={reload}
       />
       <DropDialog

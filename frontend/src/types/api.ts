@@ -80,6 +80,52 @@ export interface DropResponse {
   availableSeats: number
 }
 
+export interface WaitlistItem {
+  waitlistId: number
+  joinedAt: string
+  position: number
+  course: Course
+}
+
+export interface WaitlistResponse {
+  semester: string
+  items: WaitlistItem[]
+}
+
+export interface WaitlistJoinResponse {
+  waitlistId: number
+  position: number
+  waitlistSize: number
+  message: string
+  course: Course
+}
+
+export interface WaitlistLeaveResponse {
+  message: string
+}
+
+export type NotificationType = 'WAITLIST_JOINED' | 'WAITLIST_PROMOTED'
+
+export interface NotificationItem {
+  id: number
+  type: NotificationType
+  message: string
+  createdAt: string
+  read: boolean
+  courseId: string
+  courseCode: string
+  courseName: string
+}
+
+export interface NotificationsResponse {
+  unreadCount: number
+  items: NotificationItem[]
+}
+
+export interface NotificationReadResponse {
+  unreadCount: number
+}
+
 export type ErrorCode =
   | 'VALIDATION_ERROR'
   | 'INVALID_CREDENTIALS'
@@ -93,6 +139,10 @@ export type ErrorCode =
   | 'CREDIT_LIMIT_EXCEEDED'
   | 'PREREQUISITE_NOT_MET'
   | 'TIMETABLE_CLASH'
+  | 'SEAT_AVAILABLE'
+  | 'ALREADY_WAITLISTED'
+  | 'WAITLIST_NOT_FOUND'
+  | 'NOTIFICATION_NOT_FOUND'
   | 'INTERNAL_ERROR'
   | 'NETWORK_ERROR'
   | 'UNKNOWN_ERROR'

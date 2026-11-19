@@ -23,14 +23,14 @@ import edu.monash.registration.error.UnauthorizedException;
 import edu.monash.registration.repository.CourseRepository;
 import edu.monash.registration.repository.RegistrationRepository;
 import edu.monash.registration.repository.StudentRepository;
+import edu.monash.registration.repository.WaitlistRepository;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
+import java.util.Optional;
 import java.util.UUID;
-import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -45,8 +45,12 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>Seat arithmetic happens only while holding a {@code SELECT ... FOR UPDATE} lock on the course
  * row, inside the same transaction that inserts or deletes the registration. Check order is
  * normative: period → course exists → duplicate → prerequisites → timetable clash → credit limit →
- * capacity (A-03, A-21, A-22) for register, and registration exists → owner → period for drop. The
- * credit limit is the configured semester limit (FR10), not a constant.
+ * capacity (A-03, A-21, A-22, A-23) for register, and registration exists → owner → period for
+ * drop. The credit limit is the configured semester limit (FR10), not a constant.
+ *
+ * <p>FR11 (A-24): a successful registration clears any waitlist entry for the same student and
+ * course, and a drop hands the released seat to the first eligible waitlisted student in the same
+ * transaction (so the queue and the seat counter can never disagree).
  */
 @Service
 public class RegistrationService {
@@ -60,6 +64,9 @@ public class RegistrationService {
     private final RegistrationProperties registrationProperties;
     private final AuditService auditService;
     private final CourseDtoMapper mapper;
+    private final EligibilityService eligibility;
+    private final WaitlistService waitlistService;
+    private final WaitlistRepository waitlistRepository;
     private final Clock clock;
 
     public RegistrationService(RegistrationRepository registrationRepository,
@@ -69,6 +76,9 @@ public class RegistrationService {
             RegistrationProperties registrationProperties,
             AuditService auditService,
             CourseDtoMapper mapper,
+            EligibilityService eligibility,
+            WaitlistService waitlistService,
+            WaitlistRepository waitlistRepository,
             Clock clock) {
         this.registrationRepository = registrationRepository;
         this.courseRepository = courseRepository;
@@ -77,6 +87,9 @@ public class RegistrationService {
         this.registrationProperties = registrationProperties;
         this.auditService = auditService;
         this.mapper = mapper;
+        this.eligibility = eligibility;
+        this.waitlistService = waitlistService;
+        this.waitlistRepository = waitlistRepository;
         this.clock = clock;
     }
 
@@ -111,14 +124,7 @@ public class RegistrationService {
 
         // FR8: completion history is the only evidence; a current-semester registration for the
         // same course is not a completion (A-21).
-        Set<UUID> completedCourseIds = student.getCompletedCourses().stream()
-                .map(Course::getId)
-                .collect(Collectors.toSet());
-        List<String> missingPrerequisites = course.getPrerequisites().stream()
-                .filter(prerequisite -> !completedCourseIds.contains(prerequisite.getId()))
-                .map(Course::getCode)
-                .sorted()
-                .toList();
+        List<String> missingPrerequisites = eligibility.missingPrerequisites(student, course);
         if (!missingPrerequisites.isEmpty()) {
             auditFailure(studentId, course.getCode(), AuditAction.REGISTER_REJECTED,
                     "PREREQUISITE_NOT_MET");
@@ -138,8 +144,8 @@ public class RegistrationService {
         }
 
         int maxCredits = registrationProperties.getMaxCredits();
-        int currentCredits = currentCredits(student.getId());
-        if (currentCredits + course.getCreditHours() > maxCredits) {
+        int currentCredits = eligibility.currentCredits(student.getId(), period.semester());
+        if (!eligibility.withinCreditLimit(currentCredits, course, maxCredits)) {
             auditFailure(studentId, course.getCode(), AuditAction.REGISTER_REJECTED,
                     "CREDIT_LIMIT_EXCEEDED");
             throw new CreditLimitExceededException(course.getCode(), course.getCreditHours(),
@@ -161,6 +167,15 @@ public class RegistrationService {
             auditFailure(studentId, course.getCode(), AuditAction.REGISTER_REJECTED, "ALREADY_REGISTERED");
             throw new AlreadyRegisteredException();
         }
+
+        // FR11: registering directly supersedes a queue place, so the student is never both
+        // registered and waiting for the same course.
+        waitlistRepository.findByStudentIdAndCourseId(student.getId(), course.getId())
+                .ifPresent(entry -> {
+                    waitlistRepository.delete(entry);
+                    log.info("waitlist.cleared studentId={} course={} reason=REGISTERED",
+                            studentId, course.getCode());
+                });
 
         auditService.recordSuccess(studentId, course.getCode(), AuditAction.REGISTER);
         log.info("registration.created studentId={} course={} availableSeats={}",
@@ -212,6 +227,14 @@ public class RegistrationService {
         log.info("registration.dropped studentId={} course={} availableSeats={}",
                 studentId, course.getCode(), course.getAvailableSeats());
 
+        // FR11: the freed seat is immediately offered to the queue, in the same transaction and
+        // under the same course lock. If nobody is promoted the seat simply stays available.
+        Optional<WaitlistService.Promotion> promotion =
+                waitlistService.promoteFirstEligible(course);
+        promotion.ifPresent(promoted -> log.info(
+                "registration.dropped.queuePromoted course={} promotedStudentId={} registrationId={}",
+                promoted.courseCode(), promoted.studentId(), promoted.registrationId()));
+
         return new DropResponse("Dropped " + course.getCode() + " " + course.getName() + ".",
                 course.getAvailableSeats());
     }
@@ -236,11 +259,6 @@ public class RegistrationService {
                 studentId, items.size(), totalCredits, maxCredits);
         return new RegistrationListDto(semester, totalCredits, maxCredits,
                 Math.max(0, maxCredits - totalCredits), items);
-    }
-
-    private int currentCredits(UUID studentId) {
-        Long sum = registrationRepository.sumCredits(studentId, periodService.activeSemester());
-        return sum == null ? 0 : sum.intValue();
     }
 
     /**

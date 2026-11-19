@@ -6,6 +6,7 @@ import { useAuth } from '../auth/AuthContext'
 import CourseCard from '../components/CourseCard'
 import RegisterDialog from '../components/RegisterDialog'
 import StatusBanner from '../components/StatusBanner'
+import WaitlistDialog from '../components/WaitlistDialog'
 import Badge from '../components/ui/Badge'
 import Button from '../components/ui/Button'
 import ButtonLink from '../components/ui/ButtonLink'
@@ -26,7 +27,9 @@ import {
 } from '../lib/format'
 import { useRegistrationPeriod } from '../registration/RegistrationPeriodContext'
 import { useRegistrations } from '../registration/RegistrationsContext'
-import type { Course, CourseSchedule, RegistrationItem } from '../types/api'
+import { useWaitlist } from '../registration/WaitlistContext'
+import type { Course, CourseSchedule, RegistrationItem, WaitlistItem } from '../types/api'
+import { useToast } from '../components/ui/Toast'
 
 interface ClassEntry {
   course: Course
@@ -37,6 +40,8 @@ export default function Dashboard() {
   const { student } = useAuth()
   const { data, loading, error, refresh, isRegistered } = useRegistrations()
   const { period } = useRegistrationPeriod()
+  const { data: waitlistData, entryFor, leave } = useWaitlist()
+  const { pushToast } = useToast()
   const {
     courses,
     loading: coursesLoading,
@@ -45,8 +50,10 @@ export default function Dashboard() {
   } = useCourses()
   const reduceMotion = useReducedMotion()
   const [selectedCourse, setSelectedCourse] = useState<Course | null>(null)
+  const [waitlistCourse, setWaitlistCourse] = useState<Course | null>(null)
 
   const items = data?.items ?? []
+  const waitlistItems = waitlistData?.items ?? []
   const totalCredits = data?.totalCredits ?? 0
   const maxCredits = data?.maxCredits
   const remainingCredits =
@@ -62,6 +69,23 @@ export default function Dashboard() {
       return timeToMinutes(a.slot.startTime) - timeToMinutes(b.slot.startTime)
     })
     .slice(0, 4)
+
+  const handleLeaveWaitlist = async (item: WaitlistItem) => {
+    try {
+      await leave(item.waitlistId)
+      pushToast({
+        variant: 'info',
+        title: `Left the waitlist for ${item.course.code}`,
+        description: 'You can rejoin while the course is full and registration is open.',
+      })
+    } catch {
+      pushToast({
+        variant: 'error',
+        title: "Couldn't leave the waitlist.",
+        description: 'Try again in a moment.',
+      })
+    }
+  }
 
   const heroCopy =
     items.length === 0
@@ -268,6 +292,12 @@ export default function Dashboard() {
                     {remainingCredits ?? '—'}
                   </dd>
                 </div>
+                <div className="flex items-center justify-between gap-4 py-3">
+                  <dt className="text-body-sm text-ink-500">Waitlisted courses</dt>
+                  <dd className="tabular text-body font-semibold text-ink-900">
+                    {waitlistData?.items.length ?? 0}
+                  </dd>
+                </div>
                 <div className="flex items-center justify-between gap-4 pt-3">
                   <dt className="text-body-sm text-ink-500">Catalogue</dt>
                   <dd className="tabular text-body font-semibold text-ink-900">
@@ -350,6 +380,71 @@ export default function Dashboard() {
           </div>
         </section>
 
+        {waitlistItems.length > 0 ? (
+          <section aria-labelledby="waitlist-heading">
+            <div className="flex items-end justify-between gap-4">
+              <div>
+                <p className="text-overline uppercase tracking-[0.08em] text-blue-600">
+                  Queue
+                </p>
+                <h2 id="waitlist-heading" className="mt-1.5 font-display text-h2 text-ink-900">
+                  Waitlist
+                </h2>
+              </div>
+              <p className="text-body-sm text-ink-400">
+                {waitlistItems.length} course{waitlistItems.length === 1 ? '' : 's'}
+              </p>
+            </div>
+            <p className="mt-1 text-body-sm text-ink-500">
+              Full courses you're queued for. If a seat opens, the first eligible student is
+              enrolled automatically.
+            </p>
+            <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {waitlistItems.map((item) => (
+                <div
+                  key={item.waitlistId}
+                  className="flex flex-col gap-3 rounded-lg border border-warning-700/20 bg-surface p-5 shadow-e1"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <Link
+                        to={`/courses/${item.course.id}`}
+                        className="text-overline uppercase tracking-[0.08em] text-blue-600 hover:text-blue-500"
+                      >
+                        {item.course.code}
+                      </Link>
+                      <Link
+                        to={`/courses/${item.course.id}`}
+                        className="mt-0.5 block line-clamp-2 text-body font-semibold leading-6 text-ink-900 hover:text-blue-600"
+                      >
+                        {item.course.name}
+                      </Link>
+                    </div>
+                    <Badge variant="waitlist">#{item.position}</Badge>
+                  </div>
+                  <p className="text-body-sm text-ink-500">
+                    Position #{item.position} · joined {formatDate(item.joinedAt)}
+                  </p>
+                  <div className="mt-auto flex items-center justify-between gap-3 border-t border-line-200 pt-3">
+                    <span className="text-body-sm text-ink-400">
+                      {item.course.availableSeats === 0
+                        ? 'Course full'
+                        : `${item.course.availableSeats} seat${item.course.availableSeats === 1 ? '' : 's'} open`}
+                    </span>
+                    <Button
+                      variant="danger-ghost"
+                      size="sm"
+                      onClick={() => void handleLeaveWaitlist(item)}
+                    >
+                      Leave waitlist
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        ) : null}
+
         <section aria-labelledby="featured-heading">
           <div className="flex items-end justify-between gap-4">
             <div>
@@ -391,7 +486,9 @@ export default function Dashboard() {
                     totalCredits={totalCredits}
                     maxCredits={maxCredits}
                     activeSemester={period?.semester}
+                    waitlistPosition={entryFor(course.id)?.position}
                     onRegister={setSelectedCourse}
+                    onJoinWaitlist={setWaitlistCourse}
                   />
                 ))}
               </div>
@@ -436,6 +533,12 @@ export default function Dashboard() {
         course={selectedCourse}
         open={selectedCourse !== null}
         onClose={() => setSelectedCourse(null)}
+        onSettled={() => reloadCourses()}
+      />
+      <WaitlistDialog
+        course={waitlistCourse}
+        open={waitlistCourse !== null}
+        onClose={() => setWaitlistCourse(null)}
         onSettled={() => reloadCourses()}
       />
     </>

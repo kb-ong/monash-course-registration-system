@@ -32,9 +32,10 @@
 | B9 | Failure responses must report the *current* state truthfully: `COURSE_FULL` implies `availableSeats = 0` in the database at that moment. |
 | B10 | The 201 response's `availableSeats` is the post-decrement value read inside the same transaction. |
 | B11 | The unique constraint on `(student_id, course_id)` must never be the mechanism that protects capacity — it only protects duplicates. Two different students must be handled by the lock. |
-| B12 | No queueing, no waitlist, no retry loop that eventually grants a seat after returning 409. A 409 is final for that request. |
+| B12 | No retry loop that eventually grants a seat after returning 409. A 409 is final for that request. FR11 adds an explicit, separate queue: the client may call `POST /api/waitlist`, but that is a new request with its own checks, not a retry of the registration. |
 | B13 | Capacity is immutable in Phase 1: nothing in the API raises or lowers it. |
 | B14 | The front end treats seat counts as advisory: it may disable a full course's button but must still handle 409 `COURSE_FULL` gracefully (another student may have taken the last seat). |
+| B15 | FR11 promotion happens inside the drop transaction and under the same course row lock: the drop adds the seat back, then the first waitlisted student who still satisfies FR8, FR9 and the configured FR10 limit consumes it. C1 and C2/C3 are unchanged; the net seat change for a drop that promotes is 0, not +1. |
 
 ---
 
@@ -151,6 +152,7 @@ Copy rules: never say "sold out" (it is not commerce), always "full" or "no seat
 | T-FR6-09 | edge | course at `availableSeats = capacity` | drop | `availableSeats = capacity`, not `capacity + 1` |
 | T-FR6-10 | edge | full course `FIT3143`, one student drops | register immediately after | 201; `availableSeats=0` again |
 | T-FR6-11 | negative | any failed register | inspect DB | `availableSeats` unchanged and no registration row inserted (atomicity: no partial write) |
+| T-FR6-12 | promotion | full course with one queued student | holder drops | the queued student is registered in the same operation; `availableSeats` stays 0; C1 holds; no oversell (FR11-AC3, T-FR11-13) |
 
 ### How to write T-FR6-04 (tester recipe)
 

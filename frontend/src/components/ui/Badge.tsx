@@ -9,6 +9,7 @@ export type BadgeVariant =
   | 'open'
   | 'closing'
   | 'full'
+  | 'waitlist'
   | 'faculty'
 
 interface BadgeProps {
@@ -26,6 +27,7 @@ const styles: Record<BadgeVariant, string> = {
   open: 'bg-success-50 text-success-600',
   closing: 'bg-warning-50 text-warning-700',
   full: 'bg-danger-50 text-danger-600',
+  waitlist: 'bg-warning-50 text-warning-700',
   faculty: 'border border-line-300 bg-surface text-ink-700',
 }
 
@@ -34,6 +36,7 @@ const defaultIcons: Partial<Record<BadgeVariant, ReactNode>> = {
   open: <Dot className="h-3 w-3" aria-hidden="true" />,
   closing: <Clock className="h-3 w-3" aria-hidden="true" />,
   full: <Ban className="h-3 w-3" aria-hidden="true" />,
+  waitlist: <Clock className="h-3 w-3" aria-hidden="true" />,
 }
 
 export default function Badge({
