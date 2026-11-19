@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { getSemesters } from '../api/courses'
 import CourseCard from '../components/CourseCard'
+import CreditSummary from '../components/CreditSummary'
 import RegisterDialog from '../components/RegisterDialog'
 import StatusBanner from '../components/StatusBanner'
 import WaitlistDialog from '../components/WaitlistDialog'
@@ -115,6 +116,7 @@ export default function Catalog() {
     faculty === 'All' ? courses : courses.filter((course) => course.faculty === faculty)
 
   const totalCredits = data?.totalCredits ?? 0
+  const maxCredits = data?.maxCredits
   const periodOpen = period?.open ?? false
   const semesterOptions = (() => {
     const options = semesters.map((semester) => {
@@ -152,6 +154,14 @@ export default function Catalog() {
           title="Catalogue"
           description="Find your next unit, check the seats and register while the window is open."
         />
+
+        {data ? (
+          <CreditSummary
+            totalCredits={data.totalCredits}
+            maxCredits={data.maxCredits}
+            className="mt-6"
+          />
+        ) : null}
 
         <div className="mt-8 grid gap-3 lg:grid-cols-[minmax(0,1fr)_260px]">
           <Input
@@ -311,6 +321,7 @@ export default function Catalog() {
                     registered={isRegistered(course.id)}
                     periodOpen={periodOpen}
                     totalCredits={totalCredits}
+                    maxCredits={maxCredits}
                     activeSemester={activeSemester}
                     waitlistPosition={entryFor(course.id)?.position}
                     onRegister={setSelectedCourse}

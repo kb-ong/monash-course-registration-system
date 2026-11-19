@@ -4,16 +4,18 @@
 **Endpoints:** `POST /api/registrations`
 **Depends on:** [FR1](./01-fr1-student-login.md), [FR2](./02-fr2-view-courses.md),
 [FR6](./06-fr6-capacity.md), [FR7](./07-fr7-registration-period.md),
-[FR8](./12-fr8-prerequisites.md), [FR11](./13-fr11-waitlist.md).
+[FR8](./12-fr8-prerequisites.md), [FR9](./13-fr9-timetable-clash.md),
+[FR10](./14-fr10-max-credit-hours.md), [FR11](./15-fr11-waitlist.md).
 
 ---
 
 ## 1. Requirement
 
 > A signed-in student can register for a course in the active semester, once, while the registration
-> window is open, provided they have completed every prerequisite (FR8), stay within the 24-credit
-> limit and a seat is available. On success, exactly one seat is consumed and the student immediately
-> sees the course in their registrations.
+> window is open, provided they have completed every prerequisite (FR8), their weekly timetable does
+> not clash (FR9), they stay within the configured semester credit limit (FR10) and a seat is
+> available. On success, exactly one seat is consumed and the student immediately sees the course in
+> their registrations.
 
 ---
 
@@ -23,11 +25,11 @@
 | --- | --- |
 | B1 | Request body is `{"courseId": "<uuid>"}`. `courseId` is required and must parse as a UUID. |
 | B2 | The student identity comes **only** from the JWT subject. Any `studentId` in the body is ignored (and must not be honoured). |
-| B3 | Checks run in this order (normative, A-03, A-21): auth → body → **period** → **course exists in the active semester** (A-17) → **duplicate** → **prerequisites** (FR8) → **credit limit** → **capacity**. |
+| B3 | Checks run in this order (normative, A-03, A-21, A-22, A-23): auth → body → **period** → **course exists in the active semester** (A-17) → **duplicate** → **prerequisites** (FR8) → **timetable clash** (FR9) → **credit limit** → **capacity**. |
 | B4 | Period closed → 403 `REGISTRATION_CLOSED`. No writes, no seat change. |
 | B5 | Unknown course → 404 `COURSE_NOT_FOUND`. |
 | B6 | Already registered (same student + course) → 409 `ALREADY_REGISTERED`. Idempotent retries must not create a second row. |
-| B7 | `totalCredits + course.creditHours > 24` → 409 `CREDIT_LIMIT_EXCEEDED`. Landing exactly on 24 is allowed. |
+| B7 | `totalCredits + course.creditHours > maxCredits` → 409 `CREDIT_LIMIT_EXCEEDED`, where `maxCredits` is the configured semester limit (default 24, FR10). Landing exactly on the limit is allowed. |
 | B8 | `availableSeats = 0` → 409 `COURSE_FULL`, no record created, seat count unchanged. The E8 contract is unchanged; the UI then offers the separate FR11 **Join waitlist** action (`POST /api/waitlist`), which is a new request with its own checks, never a retry. |
 | B9 | Success → 201 with `registrationId`, `message`, the full `course` object (seats already decremented) and `availableSeats`. |
 | B10 | Seat decrement and registration insert happen in **one transaction** under a pessimistic write lock on the course row (see FR6). |
@@ -37,7 +39,9 @@
 | B14 | Every attempt (success or failure) writes exactly one audit row (NFR4). |
 | B15 | Prerequisites (FR8): the student's completion history must contain every prerequisite course of the requested course. A missed prerequisite is 409 `PREREQUISITE_NOT_MET` with no registration row and no seat change. The message names every missing prerequisite code, sorted ASC. |
 | B16 | A course payload carries `prerequisites: [{id, code, name}]`, ordered `code` ASC, and `[]` when none. The series of checks in B3 puts prerequisites before credit and capacity, so an ineligible student learns about eligibility first. |
-| B17 | FR11: a successful registration deletes any waitlist entry the same student holds for the same course. Registering directly supersedes waiting; the queue place is never kept alongside a registration. |
+| B17 | Timetable clash (FR9): the requested course's weekly slots must not intersect any slot of a course the student already holds in the active semester (half-open intervals; touching boundaries are allowed). A clash is 409 `TIMETABLE_CLASH` with no row and no seat change; the message names every conflicting course and its overlapping day/time. |
+| B18 | The clash check precedes the credit-limit and capacity checks, so an overlap is reported rather than a credit or seat failure that could not fix it. Concurrent register attempts by one student are serialised by a pessimistic student-row lock. |
+| B19 | FR11: a successful registration deletes any waitlist entry the same student holds for the same course. Registering directly supersedes waiting; the queue place is never kept alongside a registration. |
 
 ---
 
@@ -52,7 +56,8 @@
 | course | exists | 404 `COURSE_NOT_FOUND` |
 | uniqueness | no existing `(student, course)` | 409 `ALREADY_REGISTERED` |
 | prerequisites | every `course.prerequisites` id is in the student's `completedCourses` | 409 `PREREQUISITE_NOT_MET` |
-| credits | `sum + creditHours ≤ 24` | 409 `CREDIT_LIMIT_EXCEEDED` |
+| timetable | no requested slot overlaps a slot of the student's active-semester registrations | 409 `TIMETABLE_CLASH` |
+| credits | `sum + creditHours ≤ maxCredits` (configured, default 24) | 409 `CREDIT_LIMIT_EXCEEDED` |
 | seats | `availableSeats ≥ 1` | 409 `COURSE_FULL` |
 
 `VALIDATION_ERROR` message must name the offending field, e.g.
@@ -102,11 +107,15 @@ Failure examples:
 ```
 
 ```json
-{"error":{"code":"CREDIT_LIMIT_EXCEEDED","message":"Adding FIT3077 (6 credit points) would exceed the 24 credit point limit.","timestamp":"2026-11-08T11:26:41+08:00"}}
+{"error":{"code":"CREDIT_LIMIT_EXCEEDED","message":"Adding FIT3077 (6 credit points) would exceed the 24 credit point limit. You have 4 credit points remaining.","timestamp":"2026-11-08T11:26:41+08:00"}}
 ```
 
 ```json
 {"error":{"code":"PREREQUISITE_NOT_MET","message":"Cannot register for FIT3077: missing prerequisites FIT1008, FIT1047.","timestamp":"2026-11-08T11:26:41+08:00"}}
+```
+
+```json
+{"error":{"code":"TIMETABLE_CLASH","message":"Cannot register for FIT1051: timetable clash with FIT2004 (TUE 10:00-12:00).","timestamp":"2026-11-08T11:26:41+08:00"}}
 ```
 
 ---
@@ -120,6 +129,7 @@ Failure examples:
 | Unknown course | `REGISTER_REJECTED` | `FAILURE` | `COURSE_NOT_FOUND` | B5 |
 | Duplicate | `REGISTER_REJECTED` | `FAILURE` | `ALREADY_REGISTERED` | B6 |
 | Missing prerequisite | `REGISTER_REJECTED` | `FAILURE` | `PREREQUISITE_NOT_MET` | B15 |
+| Timetable clash | `REGISTER_REJECTED` | `FAILURE` | `TIMETABLE_CLASH` | B17 |
 | Credit limit | `REGISTER_REJECTED` | `FAILURE` | `CREDIT_LIMIT_EXCEEDED` | B7 |
 | Full | `REGISTER_REJECTED` | `FAILURE` | `COURSE_FULL` | B8 |
 
@@ -148,6 +158,7 @@ evidence — see NFR4.
 │  Clayton, Building 25, Rm 125                │
 │                                              │
 │  This will bring you to 12 of 24 credits.    │
+│  You would have 12 credits remaining.        │
 │                                              │
 │              [ Cancel ]  [ Confirm register ]│
 └──────────────────────────────────────────────┘
@@ -158,15 +169,16 @@ States:
 | State | Trigger | Rendering |
 | --- | --- | --- |
 | Enabled | seats > 0, period open, not registered | primary button |
-| Full — waitlist available | `availableSeats = 0`, period open, under the credit cap, not queued | gold button **Join waitlist** (FR11), note "This course is full. Join the waitlist and we'll enroll you automatically when a seat opens." |
+| Full — waitlist available | `availableSeats = 0`, period open, under the configured credit cap, not queued | gold button **Join waitlist** (FR11), note "This course is full. Join the waitlist and we'll enroll you automatically when a seat opens." |
 | Queued | course present in `GET /api/waitlist` | badge "Waitlist #N", disabled button "On waitlist · #N"; detail page offers Leave waitlist |
 | Disabled — closed | `period.open = false` | button disabled, label "Registration closed" |
 | Disabled — already | course present in `/api/registrations` | label "Registered ✓" (lucide `Check`), not clickable |
 | Pending | request in flight | button spinner, dialog buttons disabled, `aria-busy` |
 | Success | 201 | dialog closes, toast "Registered for FIT2004" + seat meter animates down, card badge becomes "Registered" |
 | Error — full | 409 `COURSE_FULL` | dialog closes, toast (danger) "FIT3143 just filled up. No seat was taken." + card refreshes to FULL and offers Join waitlist (FR11) |
-| Error — credit | 409 `CREDIT_LIMIT_EXCEEDED` | dialog stays open, inline danger alert "That would take you to 30 credits. Your limit is 24." |
+| Error — credit | 409 `CREDIT_LIMIT_EXCEEDED` | dialog stays open, inline danger alert with the server message naming the configured limit and remaining credits; registrations refetch so the dialog recomputes |
 | Error — prerequisite | 409 `PREREQUISITE_NOT_MET` | dialog stays open, inline danger alert with the server message naming every missing prerequisite; no toast claims success |
+| Error — clash | 409 `TIMETABLE_CLASH` | dialog stays open, inline danger alert with the server message naming every conflicting course and its overlapping day/time; no toast claims success |
 | Error — closed | 403 `REGISTRATION_CLOSED` | dialog closes, page-wide banner switches to "Registration closed", toast info |
 | Error — duplicate | 409 `ALREADY_REGISTERED` | dialog closes, toast info "You're already registered in this course." card marked registered |
 | Error — network | no response | dialog stays open, inline "Couldn't reach the server. Try again." with Retry |
@@ -187,14 +199,15 @@ the visible course list so seat counts, queue state and the credit meter are con
 | T-FR3-05 | negative | `courseId` = `"not-a-uuid"` | `POST` | 400 `VALIDATION_ERROR`; message mentions `courseId` |
 | T-FR3-06 | negative | well-formed unknown UUID | `POST` | 404 `COURSE_NOT_FOUND`; audit detail `COURSE_NOT_FOUND` |
 | T-FR3-07 | negative | already registered in `FIT1045` | `POST` again | 409 `ALREADY_REGISTERED`; exactly 1 registration row; `availableSeats` unchanged (119) |
-| T-FR3-08 | edge | student has 18 credits | register a 6cp course | 201 — total becomes exactly 24 |
-| T-FR3-09 | negative | student has 20 credits | register a 6cp course | 409 `CREDIT_LIMIT_EXCEEDED`; no row; seats unchanged |
+| T-FR3-08 | edge | student has 18 credits under the default 24 limit | register a 6cp course | 201 — total becomes exactly 24 |
+| T-FR3-09 | negative | student has 20 credits under the default 24 limit | register a 6cp course | 409 `CREDIT_LIMIT_EXCEEDED`; no row; seats unchanged |
 | T-FR3-10 | negative | `FIT3182` seeded full | register it | 409 `COURSE_FULL`; no *new* row; `availableSeats` still 0 |
 | T-FR3-11 | concurrency | `FIT3143` capacity 1, 5 students | 5 concurrent `POST`s | exactly one 201, four 409 `COURSE_FULL`; final `availableSeats=0`; exactly 1 registration row (see T-FR6-03) |
 | T-FR3-12 | security | Aisha's token, body includes `{"courseId": …, "studentId":"32067890"}` | `POST` | 201 attributed to `32012345`; Daniel has no registration (body field ignored) |
 | T-FR3-13 | edge | duplicate submit of the *same* request twice, sequentially | 2 × `POST` | first 201, second 409 `ALREADY_REGISTERED`; one row only |
 | T-FR3-14 | negative | student missing a prerequisite (FR8) | `POST` for that course | 409 `PREREQUISITE_NOT_MET`; no row; seats unchanged; audit detail `PREREQUISITE_NOT_MET` |
 | T-FR3-15 | ordering | full course whose prerequisites are unmet | `POST` | `PREREQUISITE_NOT_MET`, not `COURSE_FULL` (prerequisites precede capacity) |
+| T-FR3-16 | ordering | requested course overlaps a held course and would also exceed the credit limit | `POST` | `TIMETABLE_CLASH`, not `CREDIT_LIMIT_EXCEEDED` (clash precedes credit) |
 
 ---
 
@@ -204,8 +217,8 @@ the visible course list so seat counts, queue state and the credit meter are con
 returned, one registration exists, and `availableSeats` decreases by exactly one.
 **FR3-AC2** — Given the same student and course twice, when the second request arrives, then 409
 `ALREADY_REGISTERED` and no second row exists.
-**FR3-AC3** — Given the addition would exceed 24 credits, when the student registers, then 409
-`CREDIT_LIMIT_EXCEEDED`, no row, no seat change.
+**FR3-AC3** — Given the addition would exceed the configured semester limit (default 24), when the
+student registers, then 409 `CREDIT_LIMIT_EXCEEDED`, no row, no seat change.
 **FR3-AC4** — Given a course with zero seats, when the student registers, then 409 `COURSE_FULL`, no
 row, no seat change.
 **FR3-AC5** — Given a closed period, when any registration is attempted, then 403
@@ -218,6 +231,9 @@ matching action/outcome/detail.
 201 response.
 **FR3-AC9** — Given a course with prerequisites, when a student missing one registers, then 409
 `PREREQUISITE_NOT_MET` names every missing course and no row or seat change occurs (FR8).
+**FR3-AC10** — Given a course that overlaps a course the student already holds, when the student
+registers, then 409 `TIMETABLE_CLASH` names every conflicting course and overlapping time, and no
+row or seat change occurs (FR9).
 
 ---
 

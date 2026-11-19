@@ -379,6 +379,30 @@ class WaitlistTest extends BaseIntegrationTest {
     }
 
     @Test
+    @DisplayName("T-FR11-21 a queued student whose timetable now clashes is skipped at promotion")
+    void tFr11_21_promotionSkipsClash() throws Exception {
+        Course course = fixtures.seededFullCourse("FIT3182", daniel);
+        join(aisha, course).andExpect(status().isCreated());
+        join(priya, course).andExpect(status().isCreated());
+        // The seeded-full course is MON 09:00-11:00; give Aisha an overlapping registration after
+        // she joined. She is still within the credit limit, so FR9 is the only reason to skip her.
+        Course clashing = fixtures.singleSlotCourse("TST0601", 6, 20, 19);
+        fixtures.registration(aisha, clashing);
+
+        deleteAuthed(bearer(daniel), registrationId(daniel, course)).andExpect(status().isOk());
+
+        assertThat(registrationRepository.existsByStudentIdAndCourseId(aisha.getId(), course.getId()))
+                .as("the clashing head is not enrolled")
+                .isFalse();
+        assertThat(registrationRepository.existsByStudentIdAndCourseId(priya.getId(), course.getId()))
+                .as("the next eligible student receives the seat")
+                .isTrue();
+        assertThat(waitlistRepository.count()).isEqualTo(1);
+        assertThat(body(getAuthed("/api/waitlist", bearer(aisha)))
+                .path("items").get(0).path("position").asInt()).isEqualTo(1);
+    }
+
+    @Test
     @DisplayName("T-FR11-17 a successful direct registration clears a stale queue place")
     void tFr11_17_registerClearsWaitlist() throws Exception {
         Course course = fixtures.singleSlotCourse("FIT2004", 6, 2, 1);

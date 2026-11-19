@@ -1,8 +1,9 @@
 # Orchestration & Frozen Contracts
 
-Phase 1 build of the Monash Course Registration System, plus Phase 2 FR8 prerequisite validation and
-FR11 waitlist management. This file is the single source of truth for agent boundaries, branches, and
-the API contract.
+Phase 1 build of the Monash Course Registration System, plus Phase 2 FR8 prerequisite validation,
+FR9 timetable clash detection, FR10 configured semester credit-limit validation and FR11 waitlist
+management. This file is the single source of truth for agent boundaries, branches, and the API
+contract.
 Do not change frozen decisions without the orchestrator's explicit approval.
 
 ## Roles & ownership
@@ -26,6 +27,9 @@ If a tester/reviewer finds a defect, they report it; the owning coder fixes it.
   react-router-dom 6 + axios. Dev server proxies `/api` to `http://localhost:8080`.
 - Tests: JUnit 5 + Spring Boot Test + MockMvc. No Testcontainers, no external services.
 - Auth: `Authorization: Bearer <jwt>`; JWT subject = studentId; 120 min expiry.
+- FR10 credit limit: `app.registration.max-credits` (env `REGISTRATION_MAX_CREDITS`, default `24`,
+  positive integer, one value for the active semester). Enforcement and payloads use this value;
+  the UI never hardcodes a limit.
 - API base path: `/api`. Frontend must never hardcode `http://localhost:8080`.
 
 ## Frozen UI direction ("fancy university")
@@ -54,6 +58,10 @@ If a tester/reviewer finds a defect, they report it; the owning coder fixes it.
   outcome, detail, createdAt. Written for every register/drop/waitlist-join/leave attempt (NFR4), plus
   one `WAITLIST_PROMOTED` row per automatic promotion.
 - No admin UI in Phase 1/2.
+- Schedule clash detection (FR9) is a pairwise weekly-slot overlap check (same day, intersecting
+  times); travel buffers, exam timetables and automatic timetable optimisation remain out of scope.
+- The semester credit limit (FR10) is configuration (`app.registration.max-credits`), never a code
+  constant; `GET /api/registrations` exposes `maxCredits` and `remainingCredits`.
 
 ## Frozen API contract
 
@@ -85,7 +93,7 @@ with the correct HTTP status. Validation errors: 400 `VALIDATION_ERROR`.
   - 409 `PREREQUISITE_NOT_MET`, 409 `CREDIT_LIMIT_EXCEEDED`
   - 409 `SEAT_AVAILABLE` (course is not full)
   - Check order: auth -> body -> period -> course -> already registered -> already waitlisted ->
-    prerequisites -> credit limit -> seats available.
+    prerequisites -> configured credit limit -> seats available.
 - `DELETE /api/waitlist/{waitlistId}` (auth) -> 200 `{message}`; 404 `WAITLIST_NOT_FOUND` (unknown,
   foreign or non-numeric id). Allowed outside the window.
 - `GET /api/notifications` (auth) -> `{unreadCount, items:[{id,type,message,createdAt,read,courseId,courseCode,courseName}]}`
@@ -95,12 +103,16 @@ A drop (`DELETE /api/registrations/{id}`) adds the seat back and promotes the fi
 waitlisted student in the same transaction and course lock. Promotion creates a normal registration,
 deletes the queue row, writes a notification and a `WAITLIST_PROMOTED` audit row; `availableSeats`
 therefore stays 0 when the freed seat is immediately re-taken. A successful direct registration
-clears the student's queue row for that course. See `docs/specs/13-fr11-waitlist.md` and decision A-22.
+clears the student's queue row for that course. Promotion re-checks FR8 prerequisites, the FR10
+configured credit limit and FR9 timetable clashes, and skips (without deleting) an ineligible entry.
+See `docs/specs/15-fr11-waitlist.md` and decision A-24.
 
 ### Registration
 - `GET /api/registration-period` -> `{semester,startAt,endAt,open,serverTime}`
   - `open` = serverTime within [startAt, endAt].
-- `GET /api/registrations` (auth) -> `{semester, totalCredits, maxCredits:24, items:[{registrationId, registeredAt, course:{...}}]}`
+- `GET /api/registrations` (auth) -> `{semester, totalCredits, maxCredits, remainingCredits, items:[{registrationId, registeredAt, course:{...}}]}`
+  - `maxCredits` = `app.registration.max-credits` (default 24, FR10)
+  - `remainingCredits` = `max(0, maxCredits - totalCredits)`
 - `POST /api/registrations` (auth) body `{courseId}` -> 201 `{registrationId, message, course, availableSeats}`
   - 403 `REGISTRATION_CLOSED` when outside period
   - 409 `COURSE_FULL` when availableSeats = 0 (no record created, seat count unchanged; the client
@@ -108,10 +120,14 @@ clears the student's queue row for that course. See `docs/specs/13-fr11-waitlist
   - 409 `ALREADY_REGISTERED` when duplicate
   - 409 `PREREQUISITE_NOT_MET` when the student's completed-course history lacks any prerequisite;
     `message` names every missing code, sorted ASC (FR8)
-  - 409 `CREDIT_LIMIT_EXCEEDED` when totalCredits + course.creditHours > 24
+  - 409 `TIMETABLE_CLASH` when the course's weekly slots overlap a course the student already
+    holds in the active semester; `message` names every conflicting course and its overlapping
+    day/time (FR9)
+  - 409 `CREDIT_LIMIT_EXCEEDED` when totalCredits + course.creditHours > maxCredits (configured,
+    default 24, FR10); the message names the limit and remaining credits
   - 404 `COURSE_NOT_FOUND`
   - Check order (normative): auth -> body -> period -> course in active semester -> duplicate ->
-    prerequisites -> credit limit -> capacity.
+    prerequisites -> timetable clash -> credit limit -> capacity.
 - `DELETE /api/registrations/{registrationId}` (auth) -> 200 `{message, availableSeats}`
   - 403 `REGISTRATION_CLOSED`, 403 `NOT_OWNER`, 404 `REGISTRATION_NOT_FOUND`
   - may promote a waitlisted student (FR11): render the returned `availableSeats`, do not assume +1
@@ -121,9 +137,11 @@ clears the student's queue row for that course. See `docs/specs/13-fr11-waitlist
 ### Concurrency requirement
 Seat decrement/increment must be atomic under concurrent registration (pessimistic row lock or
 optimistic version + retry). Tests will hammer this with parallel requests; 10 seats must yield
-exactly 10 successful registrations and `availableSeats = 0`. FR11 queue mutations reuse the same
-course row lock, so concurrent joins get distinct positions and concurrent drops promote exactly one
-eligible student each without overselling.
+exactly 10 successful registrations and `availableSeats = 0`. FR9 serialises one student's register
+attempts with a pessimistic student-row lock (course -> student lock order). FR11 queue mutations
+reuse the same course row lock, so concurrent joins get distinct positions and concurrent drops
+promote exactly one eligible student each without overselling; promotion also takes the promoted
+student's row lock before its clash/credit reads.
 
 ## Seed data (backend must provide)
 
@@ -138,6 +156,8 @@ eligible student each without overselling.
   `FIT1047`; `MTH1030` requires `MTH1020`. Completion history: `32012345` completed
   `FIT1008` + `MTH1020`; `32067890` completed `FIT1008` + `FIT1047`; `32011111` none.
   No Phase 1 capacity course (`FIT3143`, `FIT3182`, `FIT1045`) has a prerequisite.
+- FR9 demo overlaps come from the existing §8.2 schedule (`FIT2004`/`FIT1051`, `FIT2099`/`FIT3077`,
+  `FIT3143`/`MTH1010`); no new rows.
 - FR11 waitlist demo: `FIT3182` queue = Aisha (`32012345`, position 1), Priya (`32011111`, position 2),
   with two `WAITLIST_JOINED` notifications. Daniel holds FIT3182's only seat; dropping it promotes
   Aisha automatically and moves Priya to position 1. No other seed invariant changes.

@@ -68,7 +68,7 @@ seeded (A-21): there is no student-records administration UI.
 | B2 | The registration is allowed only when **every** prerequisite course id is present in the student's completion history. |
 | B3 | If one or more prerequisites are missing, the server returns **409 `PREREQUISITE_NOT_MET`**, creates no registration row, and changes no seat count. |
 | B4 | The error message names **every** missing prerequisite code, sorted `code` ASC, e.g. `Cannot register for FIT3077: missing prerequisites FIT1008, FIT1047.` The frozen error envelope is unchanged (00 §9.1); the message is the student-facing display channel. |
-| B5 | Check order is normative and inserts prerequisites into the Phase 1 order (A-03, A-21): auth → body → period → course exists in the active semester (A-17) → duplicate → **prerequisites** → credit limit → capacity. |
+| B5 | Check order is normative and inserts prerequisites into the Phase 1 order (A-03, A-21, A-22, A-23): auth → body → period → course exists in the active semester (A-17) → duplicate → **prerequisites** → **timetable clash** → credit limit → capacity. |
 | B6 | A course with an empty prerequisite set is unaffected: registration behaves exactly as in Phase 1. |
 | B7 | A course payload carries its prerequisites as `prerequisites: [{id, code, name}]`, ordered `code` ASC. The field is required and is `[]` when there are none. |
 | B8 | A prerequisite rejection writes exactly one audit row: `REGISTER_REJECTED / FAILURE / PREREQUISITE_NOT_MET`, with the resolved `course_code` (NFR4 E-14). |
@@ -162,7 +162,7 @@ E-14 in [08 NFR4.2](./08-non-functional.md).
 
 The "Assessment & prerequisites" section lists each prerequisite code and name, or says
 "No prerequisites. This unit is open to students in the active semester." when the array is empty.
-The section still states that timetable clashes are not detected (NG2).
+The section also states that timetable clashes are checked when registering (FR9).
 
 ### 6.2 Register dialog
 

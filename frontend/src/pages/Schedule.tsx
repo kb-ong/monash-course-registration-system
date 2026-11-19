@@ -131,7 +131,13 @@ export default function Schedule() {
 
   const items = data?.items ?? []
   const totalCredits = data?.totalCredits ?? 0
-  const maxCredits = data?.maxCredits ?? 24
+  const maxCredits = data?.maxCredits
+  const limitReached = maxCredits !== undefined && totalCredits >= maxCredits
+  const nearLimit =
+    maxCredits !== undefined &&
+    maxCredits > 0 &&
+    totalCredits >= maxCredits * 0.75 &&
+    !limitReached
   const semester = data?.semester ?? period?.semester
   const periodOpen = period?.open ?? false
   const actionsDisabled = loading || Boolean(error) || items.length === 0
@@ -197,7 +203,9 @@ export default function Schedule() {
           <PageHeader
             eyebrow="Enrolment"
             title="My schedule"
-            description={`${semesterName(semester)} · ${totalCredits} of ${maxCredits} credit points`}
+            description={`${semesterName(semester)} · ${totalCredits} of ${
+              maxCredits ?? '—'
+            } credit points`}
             actions={
               <div className="flex flex-wrap items-end gap-5">
                 <StatRing
@@ -205,9 +213,9 @@ export default function Schedule() {
                   max={maxCredits}
                   loading={loading}
                   caption={
-                    totalCredits >= maxCredits
+                    limitReached
                       ? 'Credit limit reached'
-                      : totalCredits >= 18
+                      : nearLimit
                         ? `${maxCredits - totalCredits} credits left`
                         : 'credit points'
                   }
@@ -449,8 +457,9 @@ export default function Schedule() {
                             className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning-700"
                             aria-hidden="true"
                           />
-                          Overlapping classes are shown side by side. Clashes are not blocked in
-                          Phase 1.
+                          Overlapping classes are shown side by side. Registration blocks new
+                          clashes, so an overlap here means the timetable changed after it was
+                          booked.
                         </p>
                       ) : null}
                       {hasClamped ? (
@@ -472,7 +481,7 @@ export default function Schedule() {
                       Your courses ({items.length})
                     </h2>
                     <span className="tabular text-body-sm text-ink-400">
-                      {totalCredits} / {maxCredits} CP
+                      {totalCredits} / {maxCredits ?? '—'} CP
                     </span>
                   </div>
 
@@ -574,7 +583,7 @@ export default function Schedule() {
           <div className="print-title">Monash University · Course timetable</div>
           <p className="print-meta">
             {student?.name} ({student?.studentId}) · {semesterName(semester)} · {totalCredits} of{' '}
-            {maxCredits} credit points
+            {maxCredits ?? '—'} credit points
           </p>
           <p className="print-meta">Printed {formatPrintedDate(new Date())}</p>
         </div>

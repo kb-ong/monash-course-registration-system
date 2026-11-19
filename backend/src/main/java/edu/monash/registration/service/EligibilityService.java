@@ -15,11 +15,10 @@ import org.springframework.stereotype.Component;
  * <p>The waitlist must apply the same academic checks as registration, otherwise a student could
  * queue for a course they can never be enrolled in. The capacity check deliberately does not live
  * here: capacity is seat arithmetic performed under the course row lock in the calling service.
+ * The credit limit is passed in by the caller because FR10 makes it configuration, not a constant.
  */
 @Component
 public class EligibilityService {
-
-    public static final int MAX_CREDITS = 24;
 
     private final RegistrationRepository registrationRepository;
 
@@ -48,7 +47,8 @@ public class EligibilityService {
         return sum == null ? 0 : sum.intValue();
     }
 
-    public boolean withinCreditLimit(int currentCredits, Course course) {
-        return currentCredits + course.getCreditHours() <= MAX_CREDITS;
+    /** FR10: the limit is configuration, never a constant; the caller supplies the active value. */
+    public boolean withinCreditLimit(int currentCredits, Course course, int maxCredits) {
+        return currentCredits + course.getCreditHours() <= maxCredits;
     }
 }

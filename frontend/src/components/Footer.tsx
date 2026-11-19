@@ -32,7 +32,9 @@ export default function Footer() {
             {semester}
             {courseCount ? <span className="text-white/60"> · {courseCount}</span> : null}
           </p>
-          <p className="mt-2 text-body-sm text-footer-muted">Phase 2 · Prerequisites & waitlists</p>
+          <p className="mt-2 text-body-sm text-footer-muted">
+            Phase 2 · Prerequisites, clashes, credit limit &amp; waitlists
+          </p>
         </div>
 
         <div className="md:justify-self-end">

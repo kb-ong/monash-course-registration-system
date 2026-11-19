@@ -362,6 +362,7 @@ Full-width strip, height 44 (desktop) / auto (mobile), radius `md`, padding 12/1
         │  6 credit points · Tue 10:00–12:00         │  body-sm ink-500
         │                                            │
         │  This will bring you to 12 of 24 credits.  │  body, ink-700
+        │  You would have 12 credits remaining.      │  body-sm, ink-500
         │                                            │
         │              [ Cancel ]  [ Confirm ]       │  right-aligned, gap 12
         └────────────────────────────────────────────┘
@@ -438,8 +439,10 @@ Centred, max-width 420, padding 48/24. Title `h4`, body `body` `ink-500`, one pr
 
 ### 5.13 CreditMeter (dashboard/schedule)
 
-Circular ring 96 px, stroke 8, track `#E9EEF4`, fill `blue-600` (gold at 24/24), tabular centre label
-`18 / 24`, caption below `credit points`. `role="meter"` like SeatMeter.
+Circular ring 96 px, stroke 8, track `#E9EEF4`, fill `blue-600`, amber from 75 % of the configured
+limit and gold at the limit; tabular centre label `{used} / {max}` from the registrations response,
+caption below `credit points`, `{remaining} credits remaining` or `Credit limit reached`. Before the
+response loads the label is `-- / --`; never assume `24`. `role="meter"` like SeatMeter (FR10).
 
 ---
 
@@ -544,7 +547,7 @@ MOBILE (≤ 640)                       │   Please sign in again.   │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-States: **loading** — hero renders immediately (no skeleton), credit ring shows `--/24`, two card
+States: **loading** — hero renders immediately (no skeleton), credit ring shows `--/--`, two card
 skeletons; **error** — hero + banner render, `NEXT CLASSES` panel shows inline "Couldn't load your
 schedule. [Retry]"; **empty (0 registrations)** — hero copy "You're not registered in anything yet.",
 CTA `Browse catalogue`, next-classes panel replaced by EmptyState; **closed** — banner variant + both
@@ -631,7 +634,8 @@ QUEUED COURSE CARD
 │  CLASS TIMES                                  │  │ [    Register          ] ││
 │  ┌─────────────────────────────────────────┐  │  │ Adding this brings you   ││
 │  │ TUE  10:00–12:00  Clayton, B25, Rm 125  │  │  │ to 12 of 24 credits.     ││
-│  │ THU  14:00–15:00  Clayton, B25, Rm 130  │  │  └──────────────────────────┘│
+│  │ THU  14:00–15:00  Clayton, B25, Rm 130  │  │  │ 12 credits would remain. ││
+│  │                                         │  │  └──────────────────────────┘│
 │  └─────────────────────────────────────────┘  │                              │
 │                                               │  AT A GLANCE                 │
 │  ASSESSMENT & PREREQUISITES                   │  Code        FIT2004         │
@@ -776,7 +780,7 @@ Print header (`.print-only`, hidden on screen):
 
 ```
 Monash University · Course timetable
-Aisha Rahman (32012345) · Semester 2 2026 · 12 of 24 credit points
+Aisha Rahman (32012345) · Semester 2 2026 · 12 of {maxCredits} credit points
 Printed 8 November 2026
 ─────────────────────────────────────────────────────────────
 ```
@@ -804,7 +808,8 @@ that, the course table continues on a second page.
 | Register success | `Registered for {code}` |
 | Full | `Full` / `No seats available` |
 | Full on click | `That course just filled up.` |
-| Credit limit | `That would take you to {n} credits. Your limit is 24.` |
+| Credit limit | `That would take you to {next} of {max} credits. You have {remaining} credits remaining.` |
+| Credit remaining | `You would have {remaining} credits remaining.` / `{remaining} credits remaining` |
 | Already | `You're already registered in this course.` |
 | Drop confirm | `Drop {code}?` |
 | Drop success | `Dropped {code}` |
@@ -825,6 +830,7 @@ Tone: sentence case, no exclamation marks, no "Oops", no emoji, no contractions 
 - [ ] Fonts loaded with `display=swap`, `preconnect`, weights `Fraunces 600,700` + `Inter 400,500,600`.
 - [ ] `focus-visible` styles global; no `outline-none` anywhere.
 - [ ] All 6 pages + NotFound built; every state in §6 implemented (loading/empty/error/success/full/closed).
+- [ ] No hardcoded `24`: the credit limit and remaining credits come from the registrations response (FR10).
 - [ ] `prefers-reduced-motion` block shipped.
 - [ ] Print stylesheet verified with Chrome "Save as PDF" at A4.
 - [ ] 360 px, 768 px, 1024 px, 1440 px screenshot set captured for the reviewer.

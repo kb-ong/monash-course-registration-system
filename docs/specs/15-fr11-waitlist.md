@@ -1,4 +1,4 @@
-# 13 — FR11 Waitlist Management
+# 15 — FR11 Waitlist Management
 
 **Story:** US2, US4 · **Actors:** Student (P1), System (authoritative)
 **Endpoints:** `GET /api/waitlist` (E11), `POST /api/waitlist` (E12),
@@ -7,12 +7,13 @@
 `DELETE /api/registrations/{id}` (E9) promotion hook.
 **Depends on:** [FR3](./03-fr3-register-course.md), [FR4](./04-fr4-drop-course.md),
 [FR6](./06-fr6-capacity.md), [FR7](./07-fr7-registration-period.md),
-[FR8](./12-fr8-prerequisites.md).
-**Phase:** 2 (second Phase 2 requirement; Phase 1 remains FR1–FR7).
+[FR8](./12-fr8-prerequisites.md), [FR9](./13-fr9-timetable-clash.md),
+[FR10](./14-fr10-max-credit-hours.md).
+**Phase:** 2 (Phase 1 remains FR1–FR7).
 
 > This feature replaces Phase 1 non-goal **NG4** ("Waitlists, seat offers, approvals").
 > The Phase 1 rule "a 409 `COURSE_FULL` is final, there is no waitlist" (`06` B12) is
-> **superseded** by this document and by [A-22](./11-decisions.md#a-22--phase-2-fr11-waitlist-model-promotion-and-notifications).
+> **superseded** by this document and by [A-24](./11-decisions.md#a-24--phase-2-fr11-waitlist-model-promotion-and-notifications).
 
 ---
 
@@ -53,10 +54,10 @@ acceptance step (see §2.2). "Notification" is an **in-app** notification (see �
 - Promotion creates a normal `registration` row for the promoted student and consumes the freed
   seat: `availableSeats` ends unchanged (0 for an always-full course), never oversold.
 - There is no offer/acceptance window and no expiry. NG4's "seat offers" remain out of scope.
-- A student is never enrolled if doing so would break FR8 (prerequisites) or the 24-credit cap
-  (FR3/FR6). Entries that are no longer eligible are **skipped, not deleted**; the next eligible
-  student receives the seat. A skipped entry stays queued and can be promoted by a later drop if
-  the student becomes eligible again.
+- A student is never enrolled if doing so would break FR8 (prerequisites), FR9 (timetable clash)
+  or the configured FR10 credit limit. Entries that are no longer eligible are **skipped, not
+  deleted**; the next eligible student receives the seat. A skipped entry stays queued and can be
+  promoted by a later drop if the student becomes eligible again.
 
 ### 2.3 Notifications are in-app
 
@@ -121,6 +122,8 @@ Indexes: `idx_notification_student (student_id)`,
 - **C1** — FR6's `availableSeats + count(registrations) = capacity` holds before and after every join,
   leave and promotion. Promotion never changes `capacity`, and the drop/promotion pair nets to zero
   seat-count change.
+- **C2** — a promoted registration satisfies every rule of a direct registration: FR8
+  prerequisites, FR9 timetable non-overlap and the configured FR10 credit limit.
 
 ---
 
@@ -131,12 +134,12 @@ Indexes: `idx_notification_student (student_id)`,
 | B1 | Only a course in the active semester with `availableSeats = 0` can be joined; otherwise `409 SEAT_AVAILABLE`. |
 | B2 | Joining requires the registration window to be open (`403 REGISTRATION_CLOSED` otherwise). |
 | B3 | Join check order is normative: auth → body → period → course in active semester → already registered → already waitlisted → prerequisites → credit limit → seats available. This mirrors FR3/A-21 with "seats available" replacing the capacity rejection. |
-| B4 | The credit-limit check at join uses the same rule as registration: `currentCredits + course.creditHours ≤ 24`. The queue itself does not consume credits. |
-| B5 | Prerequisites are checked at join (FR8) and **re-checked at promotion**; a student who loses eligibility while queued is skipped, not enrolled, and not removed. |
+| B4 | The credit-limit check at join uses the same rule as registration: `currentCredits + course.creditHours ≤ maxCredits`, where `maxCredits` is `app.registration.max-credits` (default 24, FR10). The queue itself does not consume credits. |
+| B5 | Prerequisites are checked at join (FR8) and **re-checked at promotion**. Promotion also re-checks the configured FR10 credit limit and FR9 timetable clashes; a student who loses eligibility while queued is skipped, not enrolled, and not removed. |
 | B6 | Positions are 1-based, derived from queue id order, and returned by join, E11 and the course payload consumers. |
 | B7 | A student may leave any time (including after the window closes): their row is deleted and the queue re-ranks. |
 | B8 | A successful direct registration removes the student's queue row for that course. A queue row is never a registration and never consumes a seat. |
-| B9 | On a drop, the seat is added back and then the first eligible entry is promoted; if nobody is promoted the seat stays available. |
+| B9 | On a drop, the seat is added back and then the first eligible entry (FR8/FR9/FR10) is promoted; if nobody is promoted the seat stays available. |
 | B10 | Promotion creates a real registration with the normal seat lock and unique `(student_id, course_id)` defence; it never bypasses capacity, duplicates, prerequisites or the credit cap. |
 | B11 | A duplicate join returns `409 ALREADY_WAITLISTED`; a duplicate promotion attempt is impossible under the course lock and is still protected by the unique key. |
 | B12 | A waitlist path id is opaque: unknown, already-removed and another student's id all return `404 WAITLIST_NOT_FOUND` (no ownership oracle). A non-numeric id is also 404, and is audited with `detail = VALIDATION_ERROR`. |
@@ -194,7 +197,7 @@ Body is the same shape as E8: `{ "courseId": "<uuid>" }` (extra fields ignored).
 | 409 | `ALREADY_REGISTERED` | student already holds a registration for the course |
 | 409 | `ALREADY_WAITLISTED` | student already queued for the course |
 | 409 | `PREREQUISITE_NOT_MET` | a prerequisite is missing; `message` names every missing code, sorted ASC |
-| 409 | `CREDIT_LIMIT_EXCEEDED` | `totalCredits + course.creditHours > 24` |
+| 409 | `CREDIT_LIMIT_EXCEEDED` | `totalCredits + course.creditHours > maxCredits` (`app.registration.max-credits`, default 24, FR10) |
 | 409 | `SEAT_AVAILABLE` | `availableSeats > 0`; register directly instead |
 
 ### 5.3 E13 `DELETE /api/waitlist/{waitlistId}` (bearer)
@@ -293,15 +296,15 @@ Added to the NFR4 matrix ([08 §NFR4.2](./08-non-functional.md)):
 
 | # | Trigger | `action` | `outcome` | `detail` | HTTP |
 | --- | --- | --- | --- | --- | --- |
-| E-15 | Join success | `WAITLIST_JOIN` | `SUCCESS` | `null` | 201 |
-| E-16 | Join rejected | `WAITLIST_REJECTED` | `FAILURE` | `REGISTRATION_CLOSED`, `COURSE_NOT_FOUND`, `SEMESTER_NOT_ACTIVE`, `ALREADY_REGISTERED`, `ALREADY_WAITLISTED`, `PREREQUISITE_NOT_MET`, `CREDIT_LIMIT_EXCEEDED`, `SEAT_AVAILABLE`, `VALIDATION_ERROR` | 4xx |
-| E-17 | Leave success | `WAITLIST_LEAVE` | `SUCCESS` | `null` | 200 |
-| E-18 | Leave rejected | `WAITLIST_LEAVE` | `FAILURE` | `WAITLIST_NOT_FOUND`, `VALIDATION_ERROR` | 404 |
-| E-19 | Automatic promotion | `WAITLIST_PROMOTED` | `SUCCESS` | `null` | (inside E9's 200) |
+| E-16 | Join success | `WAITLIST_JOIN` | `SUCCESS` | `null` | 201 |
+| E-17 | Join rejected | `WAITLIST_REJECTED` | `FAILURE` | `REGISTRATION_CLOSED`, `COURSE_NOT_FOUND`, `SEMESTER_NOT_ACTIVE`, `ALREADY_REGISTERED`, `ALREADY_WAITLISTED`, `PREREQUISITE_NOT_MET`, `CREDIT_LIMIT_EXCEEDED`, `SEAT_AVAILABLE`, `VALIDATION_ERROR` | 4xx |
+| E-18 | Leave success | `WAITLIST_LEAVE` | `SUCCESS` | `null` | 200 |
+| E-19 | Leave rejected | `WAITLIST_LEAVE` | `FAILURE` | `WAITLIST_NOT_FOUND`, `VALIDATION_ERROR` | 404 |
+| E-20 | Automatic promotion | `WAITLIST_PROMOTED` | `SUCCESS` | `null` | (inside E9's 200) |
 
 Rules: exactly one row per authenticated waitlist join/leave attempt; failure rows are written after
 the transaction completes through the existing failure-audit path (NFR4-2); a promotion writes one
-E-19 for the promoted student in addition to the dropper's E-07. Join/leave validation failures are
+E-20 for the promoted student in addition to the dropper's E-07. Join/leave validation failures are
 audited by the error boundary with `course_code = null` where the course did not resolve.
 
 ---
@@ -379,7 +382,7 @@ audited by the error boundary with `course_code = null` where the course did not
 | T-FR11-04 | negative | already queued | join again | 409 `ALREADY_WAITLISTED`; exactly one row |
 | T-FR11-05 | negative | already registered | join | 409 `ALREADY_REGISTERED` |
 | T-FR11-06 | negative | missing prerequisite | join | 409 `PREREQUISITE_NOT_MET`; message names the code; no row |
-| T-FR11-07 | negative | 24 credits already | join | 409 `CREDIT_LIMIT_EXCEEDED`; no row |
+| T-FR11-07 | negative | configured credit cap already reached | join | 409 `CREDIT_LIMIT_EXCEEDED`; no row |
 | T-FR11-08 | negative | window closed | join | 403 `REGISTRATION_CLOSED`; no row; audited |
 | T-FR11-09 | negative | unknown course id | join | 404 `COURSE_NOT_FOUND` |
 | T-FR11-10 | negative | course in `2026-S1` | join | 404 `COURSE_NOT_FOUND`; audit detail `SEMESTER_NOT_ACTIVE` |
@@ -388,7 +391,7 @@ audited by the error boundary with `course_code = null` where the course did not
 | T-FR11-13 | promotion | full course, one waiter | holder drops | waiter registered; queue empty; seats 0; C1; `WAITLIST_PROMOTED` audit + notification; drop response seats 0 |
 | T-FR11-14 | promotion | capacity 2, two holders, two waiters | both holders drop | both waiters registered; queue empty; C1; no oversell |
 | T-FR11-15 | regression | no queue | drop | seat released by one; FR4 behaviour unchanged |
-| T-FR11-16 | eligibility | head reaches 24 credits after joining, second student eligible | drop | head skipped and stays queued; second promoted |
+| T-FR11-16 | eligibility | head reaches the configured credit cap after joining, second student eligible | drop | head skipped and stays queued; second promoted |
 | T-FR11-17 | edge | stale queue row for a course with a free seat | student registers | queue row cleared |
 | T-FR11-18 | notifications | two students join | inbox, mark read, foreign id | unread counts per student; read flag flips; foreign id 404 |
 | T-FR11-19 | auth | no token | all five endpoints | 401 `UNAUTHORIZED` |
@@ -397,8 +400,9 @@ audited by the error boundary with `course_code = null` where the course did not
 | T-FR11-C02 | concurrency | capacity 2, two holders, two waiters | two simultaneous drops | two 200; both waiters registered; queue empty; seats 0; C1 |
 | T-FR11-C03 | concurrency | full course, one student | two simultaneous joins | one 201 + one 409 `ALREADY_WAITLISTED`; one row |
 | T-FR11-C04 | concurrency | one queue place | two simultaneous leaves | one 200 + one 404 `WAITLIST_NOT_FOUND`; queue empty; no 5xx; both attempts audited |
+| T-FR11-21 | eligibility | head's current timetable now clashes with the full course; second student eligible | drop | head skipped and stays queued; second promoted (FR9 is re-checked at promotion) |
 
-Implementation classes: `WaitlistTest` (T-FR11-01…19), `WaitlistConcurrencyTest` (C01…C04),
+Implementation classes: `WaitlistTest` (T-FR11-01…19, 21), `WaitlistConcurrencyTest` (C01…C04),
 `RegressionDefaultProfileTest` (T-FR11-20).
 
 ---
@@ -419,9 +423,9 @@ entry disappears, and `availableSeats + registrations = capacity` still holds.
 `409 SEAT_AVAILABLE` is returned and no queue row is created.
 **FR11-AC6** — Given a student already queued or already registered, when they join again, then
 `409 ALREADY_WAITLISTED` / `409 ALREADY_REGISTERED` is returned and no second row is created.
-**FR11-AC7** — Given an unmet prerequisite or the 24-credit cap, when a student joins or is due for
-promotion, then they are not enrolled (join: 409; promotion: skipped) and the next eligible student
-receives the seat.
+**FR11-AC7** — Given an unmet prerequisite, the configured credit cap or a timetable clash (FR9),
+when a student joins or is due for promotion, then they are not enrolled (join: 409; promotion:
+skipped) and the next eligible student receives the seat.
 **FR11-AC8** — Given the queue UI, then a full course offers **Join waitlist**, a queued student sees
 their position and can leave, and the inbox shows waitlist notifications with an unread count.
 
@@ -429,7 +433,7 @@ their position and can leave, and the inbox shows waitlist notifications with an
 
 ## 12. Seed data (demo)
 
-[00 §8.6](./00-overview.md#86-fr11-waitlist-demo-normative) adds two queue rows and two join
+[00 §8.7](./00-overview.md#87-fr11-waitlist-demo-normative) adds two queue rows and two join
 notifications:
 
 | Student | Course | Position |
@@ -457,4 +461,4 @@ still 3 students, 19 courses, 1 registration, 5 prerequisite edges, 4 completion
 
 ---
 
-*Prev: [12 — FR8 Prerequisite Validation](./12-fr8-prerequisites.md) · Back to [00 — Overview](./00-overview.md)*
+*Prev: [14 — FR10 Maximum Credit-Hour Validation](./14-fr10-max-credit-hours.md) · Back to [00 — Overview](./00-overview.md)*

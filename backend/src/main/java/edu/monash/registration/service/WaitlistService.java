@@ -6,6 +6,7 @@ import edu.monash.registration.api.dto.WaitlistItemDto;
 import edu.monash.registration.api.dto.WaitlistJoinResponse;
 import edu.monash.registration.api.dto.WaitlistLeaveResponse;
 import edu.monash.registration.api.dto.WaitlistListDto;
+import edu.monash.registration.config.RegistrationProperties;
 import edu.monash.registration.domain.AuditAction;
 import edu.monash.registration.domain.Course;
 import edu.monash.registration.domain.Registration;
@@ -46,9 +47,9 @@ import org.springframework.transaction.annotation.Transactional;
  * changes, so a queue position can never be handed out for a seat that another transaction is
  * simultaneously granting. Queue order is the entry identity id (see {@link WaitlistEntry}).
  *
- * <p>Join check order is normative (A-22): period → course in the active semester → already
+ * <p>Join check order is normative (A-24): period → course in the active semester → already
  * registered → already waitlisted → prerequisites → credit limit → seats available. It mirrors the
- * registration order (A-21), with the capacity check replaced by "the course must be full".
+ * registration order (A-21, A-23), with the capacity check replaced by "the course must be full".
  */
 @Service
 public class WaitlistService {
@@ -60,6 +61,7 @@ public class WaitlistService {
     private final StudentRepository studentRepository;
     private final RegistrationRepository registrationRepository;
     private final RegistrationPeriodService periodService;
+    private final RegistrationProperties registrationProperties;
     private final EligibilityService eligibility;
     private final NotificationService notificationService;
     private final AuditService auditService;
@@ -68,14 +70,15 @@ public class WaitlistService {
 
     public WaitlistService(WaitlistRepository waitlistRepository, CourseRepository courseRepository,
             StudentRepository studentRepository, RegistrationRepository registrationRepository,
-            RegistrationPeriodService periodService, EligibilityService eligibility,
-            NotificationService notificationService, AuditService auditService,
-            CourseDtoMapper mapper, Clock clock) {
+            RegistrationPeriodService periodService, RegistrationProperties registrationProperties,
+            EligibilityService eligibility, NotificationService notificationService,
+            AuditService auditService, CourseDtoMapper mapper, Clock clock) {
         this.waitlistRepository = waitlistRepository;
         this.courseRepository = courseRepository;
         this.studentRepository = studentRepository;
         this.registrationRepository = registrationRepository;
         this.periodService = periodService;
+        this.registrationProperties = registrationProperties;
         this.eligibility = eligibility;
         this.notificationService = notificationService;
         this.auditService = auditService;
@@ -121,11 +124,12 @@ public class WaitlistService {
             throw new PrerequisiteNotMetException(course.getCode(), missingPrerequisites);
         }
 
+        int maxCredits = registrationProperties.getMaxCredits();
         int currentCredits = eligibility.currentCredits(student.getId(), period.semester());
-        if (!eligibility.withinCreditLimit(currentCredits, course)) {
+        if (!eligibility.withinCreditLimit(currentCredits, course, maxCredits)) {
             auditFailure(studentId, course.getCode(), "CREDIT_LIMIT_EXCEEDED");
             throw new CreditLimitExceededException(course.getCode(), course.getCreditHours(),
-                    EligibilityService.MAX_CREDITS);
+                    currentCredits, maxCredits);
         }
 
         if (course.getAvailableSeats() > 0) {
@@ -199,17 +203,27 @@ public class WaitlistService {
      * after the freed seat has been added back to {@code availableSeats}; promotion consumes it
      * again, so {@code availableSeats} ends unchanged when a student is promoted.
      *
-     * <p>Entries that are no longer eligible (prerequisites removed, credit cap reached) are
-     * skipped and stay queued — they do not block the students behind them, and can be promoted on
-     * a later drop if they become eligible again. A skipped entry is never silently deleted.
+     * <p>Entries that are no longer eligible (prerequisites removed, credit cap reached, or the
+     * course now clashes with the student's timetable per FR9) are skipped and stay queued — they
+     * do not block the students behind them, and can be promoted on a later drop if they become
+     * eligible again. A skipped entry is never silently deleted. The student row is locked before
+     * the clash/credit reads so the promotion cannot race that student's own registration.
      */
     @Transactional(propagation = Propagation.MANDATORY)
     public Optional<Promotion> promoteFirstEligible(Course course) {
         if (course.getAvailableSeats() <= 0) {
             return Optional.empty();
         }
+        int maxCredits = registrationProperties.getMaxCredits();
         for (WaitlistEntry entry : waitlistRepository.findQueueForCourse(course.getId())) {
-            Student student = entry.getStudent();
+            // FR9: the promoted student's own register attempts must be serialised with this
+            // automatic enrolment, so the clash check below cannot race a concurrent registration.
+            Student student = studentRepository
+                    .findWithLockByStudentId(entry.getStudent().getStudentId())
+                    .orElse(null);
+            if (student == null) {
+                continue;
+            }
             if (registrationRepository.existsByStudentIdAndCourseId(student.getId(),
                     course.getId())) {
                 log.warn("waitlist.promote.skip alreadyRegistered studentId={} course={}",
@@ -223,9 +237,18 @@ public class WaitlistService {
             }
             int currentCredits = eligibility.currentCredits(student.getId(),
                     periodService.activeSemester());
-            if (!eligibility.withinCreditLimit(currentCredits, course)) {
+            if (!eligibility.withinCreditLimit(currentCredits, course, maxCredits)) {
                 log.info("waitlist.promote.skip creditLimit studentId={} course={} credits={}",
                         student.getStudentId(), course.getCode(), currentCredits);
+                continue;
+            }
+            List<TimetableClashDetector.Clash> clashes = TimetableClashDetector.detect(course,
+                    registrationRepository.findAllForStudentInSemesterWithSchedule(
+                            student.getId(), periodService.activeSemester()));
+            if (!clashes.isEmpty()) {
+                log.info("waitlist.promote.skip timetableClash studentId={} course={} conflicts={}",
+                        student.getStudentId(), course.getCode(),
+                        TimetableClashDetector.describe(clashes));
                 continue;
             }
 

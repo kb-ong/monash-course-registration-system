@@ -82,9 +82,8 @@ export default function WaitlistDialog({
           onClose()
           break
         case 'CREDIT_LIMIT_EXCEEDED':
-          setError(
-            "Joining this waitlist would put you over the 24-credit limit. Drop a course first.",
-          )
+          // FR10: the server message names the configured limit and remaining credits.
+          setError(apiError.message)
           break
         case 'PREREQUISITE_NOT_MET':
           setError(apiError.message)

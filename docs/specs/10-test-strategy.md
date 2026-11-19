@@ -8,7 +8,7 @@ document exists in a FR/NFR file; this file does not invent requirements.
 
 ## 1. Objectives
 
-1. Prove every acceptance criterion (FR1–FR8, FR11) and every NFR threshold is met, or report
+1. Prove every acceptance criterion (FR1–FR11) and every NFR threshold is met, or report
    precisely which one is not.
 2. Prove the **capacity invariant under concurrency** — the single most likely defect in Phase 1.
 3. Prove the API contract exactly as frozen: status codes, error codes, envelope shape, headers.
@@ -164,7 +164,9 @@ properties for that class.)
 | `CapacityConcurrencyTest` | concurrency | T-FR6-01 … 11, T-NFR4-07 | 3 repeats |
 | `RegistrationPeriodTest` | MockMvc + fixed clock | T-FR7-01 … 10 | `@TestConfiguration` clock |
 | `PrerequisiteValidationTest` | MockMvc | T-FR8-01 … 10 | prerequisite graph + completion history fixtures; T-FR8-11 lives in `RegressionDefaultProfileTest` |
-| `WaitlistTest` | MockMvc + repository | T-FR11-01 … 19 | queue positions, eligibility, promotion, notifications, audit; T-FR11-20 lives in `RegressionDefaultProfileTest` |
+| `TimetableClashValidationTest` | MockMvc + concurrency | T-FR9-01 … 11 | overlap boundaries, multi-slot courses, check ordering and per-student serialisation |
+| `MaxCreditConfigTest` | MockMvc + configured property | T-FR10-01 … 08 | configured limit (18), exact-limit acceptance and rejection copy |
+| `WaitlistTest` | MockMvc + repository | T-FR11-01 … 19, 21 | queue positions, eligibility, promotion (credit and clash skips), notifications, audit; T-FR11-20 lives in `RegressionDefaultProfileTest` |
 | `WaitlistConcurrencyTest` | concurrency | T-FR11-C01 … C04 | distinct positions under parallel joins; promotion under parallel drops; one-winner double leave |
 | `CsvExportTest` | MockMvc | T-FR5-03 … 09 | headers + body bytes |
 | `AuditLogTest` | MockMvc + repository | T-NFR4-01 … 10 | row counts, `REQUIRES_NEW` proof |
@@ -200,7 +202,9 @@ names above.
 | FR6 Capacity | AC1–AC7 | T-FR6-01…11 | seat-meter states (T-NFR5-07 visual) |
 | FR7 Period | AC1–AC7 | T-FR7-01…10 | T-NFR3-05 (fail-closed banner) |
 | FR8 Prerequisites (Phase 2) | AC1–AC6 | T-FR8-01…11 | course-detail prerequisite list + register-dialog error |
-| FR11 Waitlist (Phase 2) | AC1–AC8 | T-FR11-01…20, C01–C04 | course-detail join/leave, dashboard queue, header inbox, before/after screenshots |
+| FR9 Timetable Clash Detection (Phase 2) | AC1–AC5 | T-FR9-01…11 | course-detail clash note + register-dialog error showing the conflicting classes |
+| FR10 Maximum credit hours (Phase 2) | AC1–AC6 | T-FR10-01…07 (`MaxCreditConfigTest`, `RegistrationViewTest`, `DropControllerTest`, `StartupValidationTest`) | T-FR10-08 (catalogue/detail/dialog remaining-credit states) |
+| FR11 Waitlist (Phase 2) | AC1–AC8 | T-FR11-01…21, C01–C04 (`WaitlistTest`, `WaitlistConcurrencyTest`, `RegressionDefaultProfileTest`) | course-detail join/leave, dashboard queue, header inbox, before/after screenshots |
 
 ### 7.2 Non-functional
 
@@ -209,35 +213,36 @@ names above.
 | NFR1 Performance | T-NFR1-01…04 (automated, tagged `perf`), T-NFR1-05, 06 (manual) |
 | NFR2 Security | T-NFR2-01…10 |
 | NFR3 Availability | T-NFR3-01…05 |
-| NFR4 Audit | T-NFR4-01…13 |
+| NFR4 Audit | T-NFR4-01…14 |
 | NFR5 Usability | T-NFR5-01…10 |
 
 ### 7.3 Spec-level scenario inventory (tester must confirm before sign-off)
 
 | Item | Value |
 | --- | --- |
-| Distinct test IDs in FR/NFR files | **163** (135 + 24 FR11 + 2 FR4/FR6 + 2 NFR4) |
-| Automated scope (JUnit/MockMvc/concurrency) | 146 |
+| Distinct test IDs in FR/NFR files | **185** |
+| Automated scope (JUnit/MockMvc/concurrency) | 167 |
 | of which tagged `perf`, run explicitly | 4 |
-| Manual / static scope | 17 |
+| Manual / static scope | 18 |
 | Implemented and evidenced | tracked in `docs/qa/triage.md` + `docs/qa/phase-1-test-report.md` |
 
-**163 is the scenario count, not a test-method count.** It is the traceability denominator: every
+**185 is the scenario count, not a test-method count.** It is the traceability denominator: every
 scenario in the FR/NFR files is expected to map to at least one test, but one scenario may be
 implemented by several test methods or parameterised cases (e.g. `T-NFR2-03` is a 12-route ×
-5-token-state matrix), so the executable suite legitimately runs more tests than 163. Do not treat
+5-token-state matrix), so the executable suite legitimately runs more tests than 185. Do not treat
 the suite total as evidence that a scenario is or is not covered; map it back to the IDs.
 
-Count by file: FR1 12 · FR2 13 · FR3 15 · FR4 11 · FR5 11 · FR6 12 · FR7 10 · FR8 11 · FR11 24 ·
-NFR1 6 · NFR2 10 · NFR3 5 · NFR4 13 · NFR5 10 = **163** distinct IDs.
+Count by file: FR1 12 · FR2 13 · FR3 16 · FR4 11 · FR5 11 · FR6 12 · FR7 10 · FR8 11 · FR9 11 ·
+FR10 8 · FR11 25 · NFR1 6 · NFR2 10 · NFR3 5 · NFR4 14 · NFR5 10 = **185** distinct IDs.
 
-> Phase 2 note: FR3 gained `T-FR3-14`/`T-FR3-15`; FR4 gained `T-FR4-11`; FR6 gained
-> `T-FR6-12`; NFR4 gained `T-NFR4-11…13`; FR8 adds `T-FR8-01…11`; FR11 adds `T-FR11-01…20` and
-> `T-FR11-C01…C04`. The denominator is **163** (135 baseline + 28 Phase 2 additions). The
-> automated count is 146; the manual subset stays 17.
+> Phase 2 note: FR3 gained `T-FR3-14`/`T-FR3-15`; FR4 gained `T-FR4-11`; FR6 gained `T-FR6-12`;
+> FR8 adds `T-FR8-01…11`; FR9 adds `T-FR9-01…11` with `T-FR3-16` and `T-NFR4-12`; FR10 adds
+> `T-FR10-01…08`; FR11 adds `T-FR11-01…21` and `T-FR11-C01…C04` with `T-NFR4-13…14`. The
+> denominator is **185** (121 Phase 1 + 64 Phase 2). The automated count is 167 (104 + 63); the
+> manual subset is 18 with T-FR10-08.
 
-The 17 manual/static items are: `T-FR5-11`, `T-NFR1-05`, `T-NFR1-06`, `T-NFR2-09`, `T-NFR3-01`,
-`T-NFR3-04`, `T-NFR3-05`, `T-NFR5-01` … `T-NFR5-10`.
+The 18 manual/static items are: `T-FR5-11`, `T-FR10-08`, `T-NFR1-05`, `T-NFR1-06`, `T-NFR2-09`,
+`T-NFR3-01`, `T-NFR3-04`, `T-NFR3-05`, `T-NFR5-01` … `T-NFR5-10`.
 
 ---
 
@@ -396,19 +401,19 @@ Phase 1 is test-complete when **all** hold:
 2. `mvn test` → `Failures: 0, Errors: 0`; the only skipped tests are `@Tag("perf")`.
 3. `CapacityConcurrencyTest` passes 3 consecutive runs.
 4. `npm run build` succeeds; `npm run lint` has no errors.
-5. All 135 spec-level scenarios have evidence: automated report line, or manual note + screenshot.
+5. All 156 spec-level scenarios have evidence: automated report line, or manual note + screenshot.
    The manual subset's status is recorded in `docs/qa/triage.md`; it is not inferred from the suite.
 6. Zero open `blocker` and zero open `major` defects.
 7. NFR1-P1 measured and recorded (< 3 000 ms, p95).
 8. NFR2 leak scan clean (no `$2a$`, `passwordHash`, `Bearer` values, or stack traces in responses).
-9. NFR4 audit matrix E-01…E-14 each observed at least once.
+9. NFR4 audit matrix E-01…E-15 each observed at least once.
 10. NFR5 click budget measured (3 register, 2 drop).
 11. axe: 0 critical/serious on all 5 pages.
 12. `docs/qa/report.md` written with: environment, commit SHA, command transcripts, results table,
     defect list, screenshots index, and a signed verdict (`PASS` / `PASS WITH WAIVERS` / `FAIL`).
 
 **Coverage policy decision:** line/branch coverage is *informational*, not a gate, because JaCoCo is not
-in the frozen dependency set. Behavioural coverage (the 135 spec-level scenarios, §7.3) is the gate.
+in the frozen dependency set. Behavioural coverage (the 156 spec-level scenarios, §7.3) is the gate.
 Do not add a coverage plugin without orchestrator approval.
 
 ---

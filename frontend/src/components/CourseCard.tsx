@@ -15,6 +15,8 @@ interface CourseCardProps {
   registered: boolean
   periodOpen: boolean
   totalCredits: number
+  /** Configured semester credit limit from the registrations response. */
+  maxCredits?: number
   /** The semester registrations are accepted for; other terms are blocked. */
   activeSemester?: string
   /** FR11: the student's queue position when already waiting for this course. */
@@ -29,6 +31,7 @@ export default function CourseCard({
   registered,
   periodOpen,
   totalCredits,
+  maxCredits,
   activeSemester,
   waitlistPosition,
   onRegister,
@@ -43,6 +46,7 @@ export default function CourseCard({
     registered,
     periodOpen,
     totalCredits,
+    maxCredits,
     activeSemester,
     waitlistPosition,
   })

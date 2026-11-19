@@ -5,6 +5,7 @@ import edu.monash.registration.api.dto.RegisterResponse;
 import edu.monash.registration.api.dto.RegistrationItemDto;
 import edu.monash.registration.api.dto.RegistrationListDto;
 import edu.monash.registration.api.dto.RegistrationPeriodDto;
+import edu.monash.registration.config.RegistrationProperties;
 import edu.monash.registration.domain.AuditAction;
 import edu.monash.registration.domain.Course;
 import edu.monash.registration.domain.Registration;
@@ -17,6 +18,7 @@ import edu.monash.registration.error.NotOwnerException;
 import edu.monash.registration.error.PrerequisiteNotMetException;
 import edu.monash.registration.error.RegistrationClosedException;
 import edu.monash.registration.error.RegistrationNotFoundException;
+import edu.monash.registration.error.TimetableClashException;
 import edu.monash.registration.error.UnauthorizedException;
 import edu.monash.registration.repository.CourseRepository;
 import edu.monash.registration.repository.RegistrationRepository;
@@ -42,10 +44,11 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>Seat arithmetic happens only while holding a {@code SELECT ... FOR UPDATE} lock on the course
  * row, inside the same transaction that inserts or deletes the registration. Check order is
- * normative: period → course exists → duplicate → prerequisites → credit limit → capacity (A-03,
- * A-21) for register, and registration exists → owner → period for drop.
+ * normative: period → course exists → duplicate → prerequisites → timetable clash → credit limit →
+ * capacity (A-03, A-21, A-22, A-23) for register, and registration exists → owner → period for
+ * drop. The credit limit is the configured semester limit (FR10), not a constant.
  *
- * <p>FR11 (A-22): a successful registration clears any waitlist entry for the same student and
+ * <p>FR11 (A-24): a successful registration clears any waitlist entry for the same student and
  * course, and a drop hands the released seat to the first eligible waitlisted student in the same
  * transaction (so the queue and the seat counter can never disagree).
  */
@@ -54,12 +57,11 @@ public class RegistrationService {
 
     private static final Logger log = LoggerFactory.getLogger(RegistrationService.class);
 
-    public static final int MAX_CREDITS = EligibilityService.MAX_CREDITS;
-
     private final RegistrationRepository registrationRepository;
     private final CourseRepository courseRepository;
     private final StudentRepository studentRepository;
     private final RegistrationPeriodService periodService;
+    private final RegistrationProperties registrationProperties;
     private final AuditService auditService;
     private final CourseDtoMapper mapper;
     private final EligibilityService eligibility;
@@ -71,6 +73,7 @@ public class RegistrationService {
             CourseRepository courseRepository,
             StudentRepository studentRepository,
             RegistrationPeriodService periodService,
+            RegistrationProperties registrationProperties,
             AuditService auditService,
             CourseDtoMapper mapper,
             EligibilityService eligibility,
@@ -81,6 +84,7 @@ public class RegistrationService {
         this.courseRepository = courseRepository;
         this.studentRepository = studentRepository;
         this.periodService = periodService;
+        this.registrationProperties = registrationProperties;
         this.auditService = auditService;
         this.mapper = mapper;
         this.eligibility = eligibility;
@@ -110,7 +114,7 @@ public class RegistrationService {
             throw new CourseNotFoundException();
         }
 
-        Student student = studentRepository.findByStudentId(studentId)
+        Student student = studentRepository.findWithLockByStudentId(studentId)
                 .orElseThrow(UnauthorizedException::new);
 
         if (registrationRepository.existsByStudentIdAndCourseId(student.getId(), course.getId())) {
@@ -127,11 +131,25 @@ public class RegistrationService {
             throw new PrerequisiteNotMetException(course.getCode(), missingPrerequisites);
         }
 
+        // FR9: compare the requested course's weekly slots with every course this student holds in
+        // the active semester. Existing registrations are read under the student lock above.
+        List<TimetableClashDetector.Clash> clashes = TimetableClashDetector.detect(course,
+                registrationRepository.findAllForStudentInSemesterWithSchedule(student.getId(),
+                        period.semester()));
+        if (!clashes.isEmpty()) {
+            auditFailure(studentId, course.getCode(), AuditAction.REGISTER_REJECTED,
+                    "TIMETABLE_CLASH");
+            throw new TimetableClashException(course.getCode(),
+                    TimetableClashDetector.describe(clashes));
+        }
+
+        int maxCredits = registrationProperties.getMaxCredits();
         int currentCredits = eligibility.currentCredits(student.getId(), period.semester());
-        if (!eligibility.withinCreditLimit(currentCredits, course)) {
+        if (!eligibility.withinCreditLimit(currentCredits, course, maxCredits)) {
             auditFailure(studentId, course.getCode(), AuditAction.REGISTER_REJECTED,
                     "CREDIT_LIMIT_EXCEEDED");
-            throw new CreditLimitExceededException(course.getCode(), course.getCreditHours(), MAX_CREDITS);
+            throw new CreditLimitExceededException(course.getCode(), course.getCreditHours(),
+                    currentCredits, maxCredits);
         }
 
         if (course.getAvailableSeats() <= 0) {
@@ -236,8 +254,11 @@ public class RegistrationService {
             items.add(new RegistrationItemDto(registration.getId(), registration.getRegisteredAt(),
                     mapper.toDto(registration.getCourse())));
         }
-        log.debug("registrations.view studentId={} count={}", studentId, items.size());
-        return new RegistrationListDto(semester, totalCredits, MAX_CREDITS, items);
+        int maxCredits = registrationProperties.getMaxCredits();
+        log.debug("registrations.view studentId={} count={} totalCredits={} maxCredits={}",
+                studentId, items.size(), totalCredits, maxCredits);
+        return new RegistrationListDto(semester, totalCredits, maxCredits,
+                Math.max(0, maxCredits - totalCredits), items);
     }
 
     /**

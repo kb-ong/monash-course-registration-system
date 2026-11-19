@@ -35,7 +35,7 @@
 | B12 | No retry loop that eventually grants a seat after returning 409. A 409 is final for that request. FR11 adds an explicit, separate queue: the client may call `POST /api/waitlist`, but that is a new request with its own checks, not a retry of the registration. |
 | B13 | Capacity is immutable in Phase 1: nothing in the API raises or lowers it. |
 | B14 | The front end treats seat counts as advisory: it may disable a full course's button but must still handle 409 `COURSE_FULL` gracefully (another student may have taken the last seat). |
-| B15 | FR11 promotion happens inside the drop transaction and under the same course row lock: the drop adds the seat back, then the first eligible waitlisted student consumes it. C1 and C2/C3 are unchanged; the net seat change for a drop that promotes is 0, not +1. |
+| B15 | FR11 promotion happens inside the drop transaction and under the same course row lock: the drop adds the seat back, then the first waitlisted student who still satisfies FR8, FR9 and the configured FR10 limit consumes it. C1 and C2/C3 are unchanged; the net seat change for a drop that promotes is 0, not +1. |
 
 ---
 
@@ -54,7 +54,8 @@ public RegistrationResult register(String studentId, UUID courseId) {
         throw new AlreadyRegisteredException();
 
     int credits = registrationRepository.sumCredits(studentId);
-    if (credits + locked.getCreditHours() > MAX_CREDITS)
+    // FR10: maxCredits is app.registration.max-credits (default 24), not a constant.
+    if (credits + locked.getCreditHours() > maxCredits)
         throw new CreditLimitExceededException();
 
     if (locked.getAvailableSeats() <= 0)

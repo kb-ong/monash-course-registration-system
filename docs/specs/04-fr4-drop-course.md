@@ -3,7 +3,7 @@
 **Story:** US3, US4 · **Actors:** Student (P1), System
 **Endpoints:** `DELETE /api/registrations/{registrationId}`
 **Depends on:** [FR1](./01-fr1-student-login.md), [FR6](./06-fr6-capacity.md),
-[FR7](./07-fr7-registration-period.md), [FR11](./13-fr11-waitlist.md).
+[FR7](./07-fr7-registration-period.md), [FR11](./15-fr11-waitlist.md).
 
 ---
 
@@ -24,14 +24,14 @@
 | B3 | Unknown registration id (or already dropped) → 404 `REGISTRATION_NOT_FOUND`. |
 | B4 | Registration belongs to another student → 403 `NOT_OWNER`. The body must not reveal the owner's identity or the course. |
 | B5 | Period closed → 403 `REGISTRATION_CLOSED`. |
-| B6 | Success → delete the row, `availableSeats = min(capacity, availableSeats + 1)`, return 200 `{message, availableSeats}`. FR11 then promotes the first eligible waitlisted student, consuming the freed seat; in that case the returned `availableSeats` is unchanged (0 on a full course). Clients must render the returned value, never assume "+1". |
+| B6 | Success → delete the row, `availableSeats = min(capacity, availableSeats + 1)`, return 200 `{message, availableSeats}`. FR11 then promotes the first eligible waitlisted student (FR8/FR9/FR10), consuming the freed seat; in that case the returned `availableSeats` is unchanged (0 on a full course). Clients must render the returned value, never assume "+1". |
 | B7 | Decrement/increment is transactional and holds the same pessimistic course lock used by FR3 so a concurrent register/drop cannot lose an update. |
 | B8 | Dropping is **not** idempotent: the second call is 404. The UI must therefore disable the action while pending. |
 | B9 | Dropping is subject to the same period rule as registering — no "grace period", no admin override. |
 | B10 | A drop restores the seat even if the course is now at capacity (clamped, never exceeds `capacity`). |
 | B11 | Every attempt writes one audit row: success `DROP/SUCCESS`, failure `DROP/FAILURE` with a detail code (A-02). |
 | B12 | Dropping does not cascade to audit rows; history remains. |
-| B13 | The promotion step is part of the same transaction and course row lock (FR11, A-22). If the transaction fails, the drop is rolled back too — a student never loses a seat without the seat being accounted for. A promotion writes its own `WAITLIST_PROMOTED/SUCCESS` audit row for the promoted student. |
+| B13 | The promotion step is part of the same transaction and course row lock (FR11, A-24). If the transaction fails, the drop is rolled back too — a student never loses a seat without the seat being accounted for. A promotion writes its own `WAITLIST_PROMOTED/SUCCESS` audit row for the promoted student. |
 
 ---
 

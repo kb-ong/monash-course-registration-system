@@ -59,6 +59,7 @@ export interface RegistrationsResponse {
   semester: string
   totalCredits: number
   maxCredits: number
+  remainingCredits: number
   items: RegistrationItem[]
 }
 
@@ -137,6 +138,7 @@ export type ErrorCode =
   | 'ALREADY_REGISTERED'
   | 'CREDIT_LIMIT_EXCEEDED'
   | 'PREREQUISITE_NOT_MET'
+  | 'TIMETABLE_CLASH'
   | 'SEAT_AVAILABLE'
   | 'ALREADY_WAITLISTED'
   | 'WAITLIST_NOT_FOUND'
