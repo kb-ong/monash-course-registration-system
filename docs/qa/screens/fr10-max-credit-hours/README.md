@@ -4,11 +4,13 @@ Captured from the running application (Spring Boot + Vite dev server, H2 seed) a
 viewport, light theme, registration window open. Both revisions use the same seeded student
 Aisha Rahman (`32012345`), who has no registrations at startup.
 
-- **Before / baseline:** `a486cde` (`main`), where the credit limit is the hardcoded `24` and the
-  register dialog has no remaining-credit line.
-- **After:** the FR10 implementation on this branch. `04`–`06` run with the default limit (`24`) so
-  the before/after layout is comparable. `07`–`10` run with `REGISTRATION_MAX_CREDITS=18` to exercise
-  the FR10 example configuration.
+- **Before / baseline:** `708d13a` (`main` after FR9, before FR10). The credit limit is the
+  hardcoded `24`, `GET /api/registrations` has no `remainingCredits`, and the register dialog has no
+  remaining-credit line.
+- **After:** the FR10 implementation on this branch (merged with the same `main`). `04`–`06` run with
+  the default limit (`24`) so the before/after layout is comparable. `07`–`10` run with
+  `REGISTRATION_MAX_CREDITS=18` to exercise the FR10 example configuration. Both revisions therefore
+  include the FR9 timetable-clash copy in the course detail; the comparison isolates FR10.
 
 ## Scenario A — default limit, 12 credits registered
 
@@ -16,7 +18,7 @@ Aisha Rahman (`32012345`), who has no registrations at startup.
 2. Register `FIT1045` (6cp) and `FIT2004` (6cp) via the API; the SPA reads 12/24.
 3. Capture the dashboard, catalogue and the `FIT3179` (6cp) register dialog.
 
-| Before (`a486cde`) | After (default 24) |
+| Before (`708d13a`) | After (this PR head) |
 | --- | --- |
 | ![Before dashboard](01-before-dashboard-24.png) | ![After dashboard](04-after-dashboard-24.png) |
 | ![Before register dialog](02-before-register-dialog-24.png) | ![After register dialog](05-after-register-dialog-24.png) |
