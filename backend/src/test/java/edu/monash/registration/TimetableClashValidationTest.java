@@ -105,15 +105,12 @@ class TimetableClashValidationTest extends BaseIntegrationTest {
                 Slot.of("FRI", "09:00", "11:00", "Clayton, Building 25, Rm 142"),
                 Slot.of("WED", "15:00", "17:00", "Clayton, Building 25, Rm 143"));
 
-        postRegisterAuthed(bearer(aisha), requested.getId())
+        String body = rawBody(postRegisterAuthed(bearer(aisha), requested.getId())
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.error.code").value("TIMETABLE_CLASH"))
-                .andExpect(jsonPath("$.error.message").value(
-                        org.hamcrest.Matchers.containsString("WED 14:00-16:00")));
+                .andExpect(jsonPath("$.error.code").value("TIMETABLE_CLASH")));
 
         // Only the overlapping slot is named, not the unrelated Monday slot.
-        assertThat(rawBody(postRegisterAuthed(bearer(aisha), requested.getId())))
-                .doesNotContain("MON 10:00-12:00");
+        assertThat(body).contains("WED 14:00-16:00").doesNotContain("MON 10:00-12:00");
     }
 
     @Test
@@ -174,7 +171,8 @@ class TimetableClashValidationTest extends BaseIntegrationTest {
         fixtures.registration(aisha, fit2004);
         for (int i = 1; i <= 3; i++) {
             Course filler = fixtures.course("FIL100" + i, 6, 40, 40,
-                    Slot.of("FRI", "0" + i + ":00", "0" + (i + 1) + ":00",
+                    Slot.of("FRI", String.format("%02d:00", 12 + i),
+                            String.format("%02d:00", 13 + i),
                             "Clayton, Building 25, Rm 17" + i));
             fixtures.registration(aisha, filler);
         }
